@@ -1,58 +1,164 @@
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local HRP = Character:WaitForChild("HumanoidRootPart")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
 
-local savedPosition = nil
+local lp = Players.LocalPlayer
 
-local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+local function getParent()
+    local ok, r = pcall(function() return gethui() end)
+    if ok and r then return r end
+    ok, r = pcall(function() return game:GetService("CoreGui") end)
+    if ok and r then return r end
+    return lp:WaitForChild("PlayerGui")
+end
 
-local CoordsLabel = Instance.new("TextLabel", ScreenGui)
-CoordsLabel.Size = UDim2.new(0, 300, 0, 50)
-CoordsLabel.Position = UDim2.new(0, 20, 0, 20)
-CoordsLabel.TextColor3 = Color3.new(1, 1, 1)
-CoordsLabel.BackgroundTransparency = 0.5
-CoordsLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-CoordsLabel.TextScaled = true
-CoordsLabel.Text = "Coordenadas: Cargando..."
+local parent = getParent()
+local NAME = "MiniCoordsUI"
+if parent:FindFirstChild(NAME) then parent[NAME]:Destroy() end
 
-local SaveButton = Instance.new("TextButton", ScreenGui)
-SaveButton.Size = UDim2.new(0, 200, 0, 50)
-SaveButton.Position = UDim2.new(0, 20, 0, 100)
-SaveButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-SaveButton.Text = "💾 Guardar Posición"
-SaveButton.TextColor3 = Color3.new(1,1,1)
-SaveButton.TextScaled = true
+local FULL_H, MIN_H = 130, 28
 
-local TpButton = Instance.new("TextButton", ScreenGui)
-TpButton.Size = UDim2.new(0, 200, 0, 50)
-TpButton.Position = UDim2.new(0, 20, 0, 160)
-TpButton.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
-TpButton.Text = "⚡ Teleport"
-TpButton.TextColor3 = Color3.new(1,1,1)
-TpButton.TextScaled = true
+local gui = Instance.new("ScreenGui")
+gui.Name = NAME
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = parent
 
-task.spawn(function()
-    while true do
-        local pos = HRP.Position
-        CoordsLabel.Text = string.format("X: %.2f | Y: %.2f | Z: %.2f", pos.X, pos.Y, pos.Z)
-        task.wait(0.2)
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 210, 0, FULL_H)
+main.Position = UDim2.new(0.5, -105, 0.3, 0)
+main.BackgroundColor3 = Color3.fromRGB(35, 10, 60)
+main.BorderSizePixel = 0
+main.ClipsDescendants = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = Color3.fromRGB(120, 50, 200)
+stroke.Thickness = 1.5
+
+local bar = Instance.new("Frame")
+bar.Size = UDim2.new(1, 0, 0, MIN_H)
+bar.BackgroundColor3 = Color3.fromRGB(25, 5, 45)
+bar.BorderSizePixel = 0
+bar.Parent = main
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Position = UDim2.new(0, 10, 0, 0)
+title.Size = UDim2.new(1, -70, 1, 0)
+title.Text = "Mis Coordenadas"
+title.TextColor3 = Color3.fromRGB(220, 190, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = bar
+
+local function makeBtn(text, xOffset, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 22, 0, 20)
+    b.Position = UDim2.new(1, xOffset, 0, 4)
+    b.BackgroundColor3 = color
+    b.Text = text
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.AutoButtonColor = true
+    b.Parent = bar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    return b
+end
+
+local closeBtn = makeBtn("X", -28, Color3.fromRGB(180, 40, 70))
+local minBtn = makeBtn("-", -54, Color3.fromRGB(90, 40, 150))
+
+local coordLabel = Instance.new("TextLabel")
+coordLabel.BackgroundTransparency = 1
+coordLabel.Position = UDim2.new(0, 10, 0, 34)
+coordLabel.Size = UDim2.new(1, -20, 0, 56)
+coordLabel.Text = "X: 0\nY: 0\nZ: 0"
+coordLabel.TextColor3 = Color3.fromRGB(235, 220, 255)
+coordLabel.Font = Enum.Font.Code
+coordLabel.TextSize = 15
+coordLabel.TextXAlignment = Enum.TextXAlignment.Left
+coordLabel.TextYAlignment = Enum.TextYAlignment.Top
+coordLabel.Parent = main
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(1, -20, 0, 26)
+copyBtn.Position = UDim2.new(0, 10, 0, 94)
+copyBtn.BackgroundColor3 = Color3.fromRGB(110, 45, 190)
+copyBtn.Text = "Copiar"
+copyBtn.TextColor3 = Color3.new(1, 1, 1)
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 13
+copyBtn.Parent = main
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 6)
+
+local lastText = ""
+local conn = RunService.RenderStepped:Connect(function()
+    local char = lp.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local p = hrp.Position
+        lastText = string.format("%.2f, %.2f, %.2f", p.X, p.Y, p.Z)
+        coordLabel.Text = string.format("X: %.2f\nY: %.2f\nZ: %.2f", p.X, p.Y, p.Z)
     end
 end)
 
-SaveButton.MouseButton1Click:Connect(function()
-    savedPosition = HRP.CFrame
-    SaveButton.Text = "✅ Posición Guardada"
-    task.wait(1.5)
-    SaveButton.Text = "💾 Guardar Posición"
+copyBtn.MouseButton1Click:Connect(function()
+    local copy = setclipboard or toclipboard or (syn and syn.write_clipboard)
+    if copy and lastText ~= "" then
+        copy(lastText)
+        copyBtn.Text = "¡Copiado!"
+    else
+        copyBtn.Text = "No soportado"
+    end
+    task.delay(1, function()
+        if copyBtn then copyBtn.Text = "Copiar" end
+    end)
 end)
 
-TpButton.MouseButton1Click:Connect(function()
-    if savedPosition then
-        HRP.CFrame = savedPosition
-    else
-        TpButton.Text = "❌ No hay posición guardada"
-        task.wait(1.5)
-        TpButton.Text = "⚡ Teleport"
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    main.Size = UDim2.new(0, 210, 0, minimized and MIN_H or FULL_H)
+    minBtn.Text = minimized and "+" or "-"
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    conn:Disconnect()
+    gui:Destroy()
+end)
+
+local dragging, dragStart, startPos, dragInput
+bar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+bar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local d = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y
+        )
     end
 end)
