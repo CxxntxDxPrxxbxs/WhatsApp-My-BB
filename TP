@@ -1,0 +1,58 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HRP = Character:WaitForChild("HumanoidRootPart")
+
+local savedPosition = nil
+
+local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+
+local CoordsLabel = Instance.new("TextLabel", ScreenGui)
+CoordsLabel.Size = UDim2.new(0, 300, 0, 50)
+CoordsLabel.Position = UDim2.new(0, 20, 0, 20)
+CoordsLabel.TextColor3 = Color3.new(1, 1, 1)
+CoordsLabel.BackgroundTransparency = 0.5
+CoordsLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+CoordsLabel.TextScaled = true
+CoordsLabel.Text = "Coordenadas: Cargando..."
+
+local SaveButton = Instance.new("TextButton", ScreenGui)
+SaveButton.Size = UDim2.new(0, 200, 0, 50)
+SaveButton.Position = UDim2.new(0, 20, 0, 100)
+SaveButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+SaveButton.Text = "💾 Guardar Posición"
+SaveButton.TextColor3 = Color3.new(1,1,1)
+SaveButton.TextScaled = true
+
+local TpButton = Instance.new("TextButton", ScreenGui)
+TpButton.Size = UDim2.new(0, 200, 0, 50)
+TpButton.Position = UDim2.new(0, 20, 0, 160)
+TpButton.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+TpButton.Text = "⚡ Teleport"
+TpButton.TextColor3 = Color3.new(1,1,1)
+TpButton.TextScaled = true
+
+task.spawn(function()
+    while true do
+        local pos = HRP.Position
+        CoordsLabel.Text = string.format("X: %.2f | Y: %.2f | Z: %.2f", pos.X, pos.Y, pos.Z)
+        task.wait(0.2)
+    end
+end)
+
+SaveButton.MouseButton1Click:Connect(function()
+    savedPosition = HRP.CFrame
+    SaveButton.Text = "✅ Posición Guardada"
+    task.wait(1.5)
+    SaveButton.Text = "💾 Guardar Posición"
+end)
+
+TpButton.MouseButton1Click:Connect(function()
+    if savedPosition then
+        HRP.CFrame = savedPosition
+    else
+        TpButton.Text = "❌ No hay posición guardada"
+        task.wait(1.5)
+        TpButton.Text = "⚡ Teleport"
+    end
+end)
