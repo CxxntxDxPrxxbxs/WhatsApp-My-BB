@@ -9,6 +9,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local UserInputService = game:GetService("UserInputService")
 local RbxAnalyticsService = game:GetService("RbxAnalyticsService")
+local CollectionService = game:GetService("CollectionService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -152,6 +154,10 @@ local Strings = {
         boss_none = "None",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "The boss event is not available right now.",
+        alien_section = "Alien Section",
+        alien_status_title = "Alien Boss Status",
+        alien_autoboss = "Auto Alien Boss",
+        alien_waiting = "Waiting for Alien Boss",
         bw_section = "Boss Webhook",
         bw_input = "Discord Webhook URL",
         bw_toggle = "Enable Boss Notifications",
@@ -604,6 +610,10 @@ local Strings = {
         boss_none = "Ninguno",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "El evento de boss no está disponible ahora.",
+        alien_section = "Sección Alien",
+        alien_status_title = "Estado del Alien Boss",
+        alien_autoboss = "Auto Alien Boss",
+        alien_waiting = "Esperando Alien Boss",
         bw_section = "Webhook de bosses",
         bw_input = "URL del webhook de Discord",
         bw_toggle = "Activar notificaciones de bosses",
@@ -979,11 +989,11 @@ local Registry = {}
 local Tabs = {}
 local WindUI
 
+Util.notificationsEnabled = true
+
 function Util.register(flag, element)
     Registry[flag] = element
 end
-
-Util.notificationsEnabled = true
 
 function Util.notify(title, content, icon)
     if not Util.notificationsEnabled then
@@ -999,22 +1009,6 @@ function Util.notify(title, content, icon)
     end)
 end
 
-function Util.copyText(text)
-    local fn = setclipboard or toclipboard or (syn and syn.write_clipboard) or (Clipboard and Clipboard.set)
-    if fn then
-        return (pcall(fn, text))
-    end
-    return false
-end
-
-function Util.copyWithNotice(label, text)
-    if Util.copyText(text) then
-        Util.notify(L("copied"), L("copied_msg", label), "copy")
-    else
-        Util.notify(L("error"), L("no_clipboard"), "triangle-alert")
-    end
-end
-
 function Util.formatTime(total)
     total = math.floor(total)
     return string.format(
@@ -1023,10 +1017,6 @@ function Util.formatTime(total)
         math.floor(total % 3600 / 60),
         total % 60
     )
-end
-
-function Util.yesNo(value)
-    return value and L("yes") or L("no")
 end
 
 function Util.getExecutor(fallback)
@@ -1047,7 +1037,9 @@ function Util.getExecutor(fallback)
 end
 
 function Util.getGameName(fallback)
-    if Util._gameName then return Util._gameName end
+    if Util._gameName then
+        return Util._gameName
+    end
     local ok, info = pcall(function()
         return MarketplaceService:GetProductInfo(game.PlaceId)
     end)
@@ -1270,6 +1262,8 @@ function Logger.send(title, status, color, reason)
     end))
 end
 
+local ACCESS_FETCH_TIMEOUT = 10
+
 local function fetchUsers(url)
     local ok, result = pcall(function()
         return HttpService:JSONDecode(game:HttpGet(url))
@@ -1303,6 +1297,7 @@ end
 
 local blacklistUsers, whitelistUsers
 local pending = 2
+
 task.spawn(function()
     blacklistUsers = fetchUsers(Config.BlacklistUrl)
     pending = pending - 1
@@ -1313,7 +1308,7 @@ task.spawn(function()
 end)
 
 local waitStart = os.clock()
-while pending > 0 and os.clock() - waitStart < 10 do
+while pending > 0 and os.clock() - waitStart < ACCESS_FETCH_TIMEOUT do
     task.wait()
 end
 
@@ -1373,7 +1368,7 @@ local function isAlive()
 end
 
 do
-    local VirtualInputManager = game:GetService("VirtualInputManager")
+    local ANTI_AFK_INTERVAL = 60
 
     local function antiAfkPulse()
         pcall(function()
@@ -1406,7 +1401,7 @@ do
 
     task.spawn(function()
         while isAlive() do
-            task.wait(60)
+            task.wait(ANTI_AFK_INTERVAL)
             antiAfkPulse()
         end
     end)
@@ -1560,7 +1555,7 @@ local layout = {
         Title = L("sec_player"),
         Tabs = {
             { Key = "Stats", Title = L("tab_stats"), Icon = "users" },
-            { Key = "Killer", Title = L("tab_killer"), Icon = "skull", },
+            { Key = "Killer", Title = L("tab_killer"), Icon = "skull" },
             { Key = "Teleport", Title = L("tab_teleport"), Icon = "map-pin" },
         },
     },
@@ -1587,7 +1582,9 @@ for _, sectionData in ipairs(layout) do
     end
 end
 
+local PACE_EVERY = 4
 local pacedCount = 0
+
 function Util.pace(tab)
     for _, name in ipairs({ "Section", "Paragraph", "Button", "Toggle", "Dropdown", "Input", "Divider" }) do
         local original = tab[name]
@@ -1596,7 +1593,7 @@ function Util.pace(tab)
                 tab[name] = function(self, ...)
                     local result = original(self, ...)
                     pacedCount = pacedCount + 1
-                    if pacedCount % 4 == 0 then
+                    if pacedCount % PACE_EVERY == 0 then
                         task.wait()
                         if not isAlive() then
                             error("hub reloaded", 0)
@@ -1616,6 +1613,37 @@ end
 do
     local Home = Tabs.Home
 
+    local function copyText(text)
+        local fn = setclipboard or toclipboard or (syn and syn.write_clipboard) or (Clipboard and Clipboard.set)
+        if fn then
+            return (pcall(fn, text))
+        end
+        return false
+    end
+
+    local function copyWithNotice(label, text)
+        if copyText(text) then
+            Util.notify(L("copied"), L("copied_msg", label), "copy")
+        else
+            Util.notify(L("error"), L("no_clipboard"), "triangle-alert")
+        end
+    end
+
+    local function yesNo(value)
+        return value and L("yes") or L("no")
+    end
+
+    local function rejoinServer()
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end)
+        if not ok then
+            pcall(function()
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end)
+        end
+    end
+
     local fps, frames, lastCheck = 0, 0, os.clock()
     local fpsConnection = RunService.RenderStepped:Connect(function()
         frames = frames + 1
@@ -1628,6 +1656,24 @@ do
     end)
 
     local createdAt = os.date("%Y-%m-%d", os.time() - LocalPlayer.AccountAge * 86400)
+    local executorName, executorVersion = Util.getExecutor()
+
+    local capabilities = {
+        { L("home_cap_clipboard"), (setclipboard or toclipboard) ~= nil },
+        { L("home_cap_http"), (request or http_request or (syn and syn.request)) ~= nil },
+        { L("home_cap_files"), (writefile and readfile) ~= nil },
+        { L("home_cap_hooks"), hookfunction ~= nil },
+        { L("home_cap_drawing"), Drawing ~= nil },
+        { L("home_cap_queue"), (queue_on_teleport or (syn and syn.queue_on_teleport)) ~= nil },
+    }
+
+    local executorLines = {
+        L("home_name") .. ": " .. executorName,
+        L("home_version") .. ": " .. executorVersion,
+    }
+    for _, item in ipairs(capabilities) do
+        table.insert(executorLines, item[1] .. ": " .. yesNo(item[2]))
+    end
 
     Home:Section({ Title = L("home_player") })
 
@@ -1647,7 +1693,7 @@ do
         Title = L("home_copy_user_id"),
         Icon = "copy",
         Callback = function()
-            Util.copyWithNotice(L("home_user_id"), tostring(LocalPlayer.UserId))
+            copyWithNotice(L("home_user_id"), tostring(LocalPlayer.UserId))
         end,
     })
 
@@ -1673,7 +1719,7 @@ do
         Title = L("home_copy_place_id"),
         Icon = "copy",
         Callback = function()
-            Util.copyWithNotice(L("home_place_id"), tostring(game.PlaceId))
+            copyWithNotice(L("home_place_id"), tostring(game.PlaceId))
         end,
     })
 
@@ -1681,45 +1727,17 @@ do
         Title = L("home_copy_job_id"),
         Icon = "copy",
         Callback = function()
-            Util.copyWithNotice(L("home_job_id"), tostring(game.JobId))
+            copyWithNotice(L("home_job_id"), tostring(game.JobId))
         end,
     })
 
     Home:Button({
         Title = L("home_rejoin"),
         Icon = "refresh-cw",
-        Callback = function()
-            local ok = pcall(function()
-                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-            end)
-            if not ok then
-                pcall(function()
-                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
-                end)
-            end
-        end,
+        Callback = rejoinServer,
     })
 
     Home:Section({ Title = L("home_executor") })
-
-    local executorName, executorVersion = Util.getExecutor()
-
-    local capabilities = {
-        { L("home_cap_clipboard"), (setclipboard or toclipboard) ~= nil },
-        { L("home_cap_http"), (request or http_request or (syn and syn.request)) ~= nil },
-        { L("home_cap_files"), (writefile and readfile) ~= nil },
-        { L("home_cap_hooks"), hookfunction ~= nil },
-        { L("home_cap_drawing"), Drawing ~= nil },
-        { L("home_cap_queue"), (queue_on_teleport or (syn and syn.queue_on_teleport)) ~= nil },
-    }
-
-    local executorLines = {
-        L("home_name") .. ": " .. executorName,
-        L("home_version") .. ": " .. executorVersion,
-    }
-    for _, item in ipairs(capabilities) do
-        table.insert(executorLines, item[1] .. ": " .. Util.yesNo(item[2]))
-    end
 
     Home:Paragraph({
         Title = L("home_executor_info"),
@@ -1733,7 +1751,7 @@ do
         Desc = L("home_discord_desc"),
         Icon = "message-circle",
         Callback = function()
-            Util.copyWithNotice(L("home_discord_label"), Config.DiscordLink)
+            copyWithNotice(L("home_discord_label"), Config.DiscordLink)
         end,
     })
 
@@ -1756,6 +1774,83 @@ end
 do
     local Farm = Tabs.Farm
 
+    local AUTO_TRAIN_PING_LIMIT = 3000
+    local ROCK_RESCAN_INTERVAL = 5
+    local BRAWL_JOIN_DELAY = 0.75
+    local BRAWL_ATTACK_TIMEOUT = 8
+    local TP_KING_BASE = Vector3.new(-8636, 17, -5759)
+
+    local ROCKS = {
+        { name = "Tiny Island Rock", durability = 0 },
+        { name = "Starter Island Rock", durability = 100 },
+        { name = "Legend Beach Rock", durability = 5000 },
+        { name = "Frost Gym Rock", durability = 150000 },
+        { name = "Mythical Gym Rock", durability = 400000 },
+        { name = "Eternal Gym Rock", durability = 750000 },
+        { name = "Legend Gym Rock", durability = 1000000 },
+        { name = "Muscle King Gym Rock", durability = 5000000 },
+        { name = "Ancient Jungle Rock", durability = 10000000, exact = true },
+        { name = "Glacial Rock", durability = 10000000, exact = true },
+        { name = "Industrial Rock", durability = 25000000 },
+    }
+
+    local TOOLS = {
+        { "Weight", "repTime", 1 },
+        { "Pushups", "repTime", 1 },
+        { "Situps", "repTime", 1 },
+        { "Handstands", "repTime", 1 },
+        { "Punch", "attackTime", 0.35 },
+    }
+
+    local COMBOS = {
+        { "Auto Pushup + Punch Rock", "Pushups", "Industrial Rock", 0.0001 },
+        { "Auto Situp + Punch Rock", "Situps", "Industrial Rock", 0.0001 },
+        { "Auto Handstands + Punch Rock", "Handstands", "Industrial Rock", 0.0001 },
+        { "Auto Weight + Punch Rock", "Weight", "Industrial Rock", 0.0001 },
+    }
+
+    local function namesFrom(list, index)
+        local names = {}
+        for _, entry in ipairs(list) do
+            table.insert(names, entry[index] or entry.name)
+        end
+        return names
+    end
+
+    local loopGen = { tool = 0, train = 0, combo = 0, rebirth = 0 }
+
+    local autoFarmBrawls = false
+    local autoJoinBrawls = false
+    local lastJoinAttempt = 0
+    local promptShownAt = nil
+
+    local selectedRock = ""
+    local autoRock = false
+    local rockTime = 0
+    local rockSession = 0
+    local rockParts = {}
+    local scannedRock = nil
+    local lastRockScan = 0
+
+    local selectedTool = ""
+    local autoTool = false
+    local fastTools = false
+    local fastToolsConn = nil
+    local autoTrain = false
+
+    local selectedCombo = ""
+    local autoCombo = false
+
+    local rebirthTarget = 0
+    local autoRebirthTarget = false
+    local autoRebirthInfinite = false
+    local rebirthLock = false
+    local rebirthLockConn = nil
+    local rebirthLockCharConn = nil
+    local rebirthLockSaved = nil
+    local antiRebirthHooked = false
+    local AutoRebirthTargetToggle, AutoRebirthInfiniteToggle
+
     local Brawl = nil
     pcall(function()
         local node = ReplicatedStorage
@@ -1767,11 +1862,6 @@ do
         end
         Brawl = node
     end)
-
-    local autoFarmBrawls = false
-    local autoJoinBrawls = false
-    local lastJoinAttempt = 0
-    local promptShownAt = nil
 
     local function getCharacter(player)
         local character = player.Character
@@ -1805,6 +1895,82 @@ do
         return punch
     end
 
+    local function fireMuscle(action, hand)
+        pcall(function()
+            if hand then
+                LocalPlayer.muscleEvent:FireServer(action, hand)
+            else
+                LocalPlayer.muscleEvent:FireServer(action)
+            end
+        end)
+    end
+
+    local function toolEquip(toolName)
+        local character, humanoid = getCharacter(LocalPlayer)
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if not character or not backpack or not toolName or toolName == "" then
+            return
+        end
+        local tool = backpack:FindFirstChild(toolName)
+        if tool and not character:FindFirstChild(toolName) then
+            pcall(function()
+                humanoid:EquipTool(tool)
+            end)
+        end
+    end
+
+    local function toolUnequip(toolName)
+        local character = LocalPlayer.Character
+        if not character or not toolName or toolName == "" then
+            return
+        end
+        local tool = character:FindFirstChild(toolName)
+        if tool then
+            tool.Parent = LocalPlayer.Backpack
+        end
+    end
+
+    local function punchLoop(condition)
+        task.spawn(function()
+            while condition() and isAlive() do
+                local punch = equipPunch()
+                if punch then
+                    local attackTime = punch:FindFirstChild("attackTime")
+                    if attackTime then
+                        attackTime.Value = 0
+                    end
+                    pcall(function()
+                        punch:Activate()
+                    end)
+                end
+                task.wait()
+            end
+        end)
+    end
+
+    local function safeTouch(rockPart, hand)
+        if not firetouchinterest then
+            return
+        end
+        pcall(function()
+            firetouchinterest(hand, rockPart, 0)
+            firetouchinterest(hand, rockPart, 1)
+        end)
+    end
+
+    local function touchRock(rockPart, hand, delay)
+        if not firetouchinterest then
+            return
+        end
+        pcall(function()
+            firetouchinterest(hand, rockPart, 0)
+            if delay and delay > 0 then
+                task.wait(delay)
+            end
+            firetouchinterest(hand, rockPart, 1)
+        end)
+    end
+
     local function isBrawler(player)
         local character, humanoid, root = getCharacter(player)
         if not character
@@ -1813,6 +1979,24 @@ do
             return false
         end
         return true, character, humanoid, root
+    end
+
+    local function isBrawlPromptVisible()
+        local gameGui = LocalPlayer.PlayerGui:FindFirstChild("gameGui")
+        if not gameGui then
+            return false
+        end
+
+        local choiceMenu = gameGui:FindFirstChild("baseChoiceMenu")
+        local choiceText = choiceMenu and choiceMenu:FindFirstChild("Text", true)
+        if choiceMenu and choiceMenu.Visible
+            and choiceText
+            and string.find(string.lower(choiceText.Text), "brawl", 1, true) then
+            return true
+        end
+
+        local legacyPrompt = gameGui:FindFirstChild("brawlJoinLabel")
+        return legacyPrompt ~= nil and legacyPrompt.Visible
     end
 
     local function clickBrawlYes()
@@ -1852,24 +2036,6 @@ do
         return false
     end
 
-    local function isBrawlPromptVisible()
-        local gameGui = LocalPlayer.PlayerGui:FindFirstChild("gameGui")
-        if not gameGui then
-            return false
-        end
-
-        local choiceMenu = gameGui:FindFirstChild("baseChoiceMenu")
-        local choiceText = choiceMenu and choiceMenu:FindFirstChild("Text", true)
-        if choiceMenu and choiceMenu.Visible
-            and choiceText
-            and string.find(string.lower(choiceText.Text), "brawl", 1, true) then
-            return true
-        end
-
-        local legacyPrompt = gameGui:FindFirstChild("brawlJoinLabel")
-        return legacyPrompt ~= nil and legacyPrompt.Visible
-    end
-
     local function tryJoinBrawl()
         local character = LocalPlayer.Character
         local inProgress = Brawl:GetAttribute("BrawlInProgress") == true
@@ -1879,8 +2045,9 @@ do
         if inProgress and not started and not joined then
             if isBrawlPromptVisible() then
                 promptShownAt = promptShownAt or os.clock()
-                if os.clock() - promptShownAt >= 0.75 and os.clock() - lastJoinAttempt >= 0.75 then
-                    lastJoinAttempt = os.clock()
+                local now = os.clock()
+                if now - promptShownAt >= BRAWL_JOIN_DELAY and now - lastJoinAttempt >= BRAWL_JOIN_DELAY then
+                    lastJoinAttempt = now
                     clickBrawlYes()
                 end
             else
@@ -1895,7 +2062,7 @@ do
         local started = os.clock()
         local nextAttack = 0
 
-        while autoFarmBrawls and isAlive() and os.clock() - started < 8 do
+        while autoFarmBrawls and isAlive() and os.clock() - started < BRAWL_ATTACK_TIMEOUT do
             local localCharacter, _, localRoot = getCharacter(LocalPlayer)
             local valid, _, _, targetRoot = isBrawler(player)
 
@@ -1997,52 +2164,16 @@ do
         end
     end)
 
-    local rockList = {
-        { name = "Tiny Island Rock", durability = 0 },
-        { name = "Starter Island Rock", durability = 100 },
-        { name = "Legend Beach Rock", durability = 5000 },
-        { name = "Frost Gym Rock", durability = 150000 },
-        { name = "Mythical Gym Rock", durability = 400000 },
-        { name = "Eternal Gym Rock", durability = 750000 },
-        { name = "Legend Gym Rock", durability = 1000000 },
-        { name = "Muscle King Gym Rock", durability = 5000000 },
-        { name = "Ancient Jungle Rock", durability = 10000000 },
-        { name = "Industrial Rock", durability = 25000000 },
-    }
-
-    local rockNames = {}
-    for _, rock in ipairs(rockList) do
-        table.insert(rockNames, rock.name)
-    end
-
-    local selectedRock = ""
-    local autoRock = false
-    local rockTime = 0
-    local rockSession = 0
-    local rockParts = {}
-    local scannedRock = nil
-    local lastRockScan = 0
-
     local function getRockDurability(name)
-        for _, rock in ipairs(rockList) do
+        for _, rock in ipairs(ROCKS) do
             if rock.name == name then
-                return rock.durability
+                return rock.durability, rock
             end
         end
         return nil
     end
 
-    local function safeTouch(rockPart, hand)
-        if not firetouchinterest then
-            return
-        end
-        pcall(function()
-            firetouchinterest(hand, rockPart, 0)
-            firetouchinterest(hand, rockPart, 1)
-        end)
-    end
-
-    local function scanRocks(durability)
+    local function scanRocks(durability, exactName)
         local found = {}
         local machines = workspace:FindFirstChild("machinesFolder")
         if not machines then
@@ -2050,8 +2181,9 @@ do
         end
         for _, object in ipairs(machines:GetDescendants()) do
             if object.Name == "neededDurability" and object:IsA("ValueBase") and object.Value == durability then
-                local rockPart = object.Parent and object.Parent:FindFirstChild("Rock")
-                if rockPart then
+                local model = object.Parent
+                local rockPart = model and model:FindFirstChild("Rock")
+                if rockPart and (not exactName or model.Name == exactName) then
                     table.insert(found, rockPart)
                 end
             end
@@ -2080,7 +2212,7 @@ do
             return
         end
 
-        local durability = getRockDurability(selectedRock)
+        local durability, rockEntry = getRockDurability(selectedRock)
         if not durability then
             return
         end
@@ -2093,8 +2225,8 @@ do
         end
 
         local now = os.clock()
-        if scannedRock ~= selectedRock or now - lastRockScan >= 5 then
-            rockParts = scanRocks(durability)
+        if scannedRock ~= selectedRock or now - lastRockScan >= ROCK_RESCAN_INTERVAL then
+            rockParts = scanRocks(durability, rockEntry.exact and rockEntry.name or nil)
             scannedRock = selectedRock
             lastRockScan = now
         end
@@ -2127,7 +2259,7 @@ do
 
     local RockDropdown = Farm:Dropdown({
         Title = L("farm_select_rock"),
-        Values = rockNames,
+        Values = namesFrom(ROCKS, "name"),
         Value = nil,
         AllowNone = true,
         Callback = function(option)
@@ -2175,96 +2307,25 @@ do
             end
         end
     end)
-    local loopGen = { tool = 0, train = 0, combo = 0, rebirth = 0 }
 
-    local toolList = {
-        { "Weight", "repTime", 1 },
-        { "Pushups", "repTime", 1 },
-        { "Situps", "repTime", 1 },
-        { "Handstands", "repTime", 1 },
-        { "Punch", "attackTime", 0.35 },
-    }
-    local toolNames = {}
-    for _, t in ipairs(toolList) do
-        table.insert(toolNames, t[1])
-    end
-
-    local selectedTool = ""
-    local autoTool = false
-    local fastTools = false
-    local autoTrain = false
-
-    local function fireMuscle(action, hand)
-        pcall(function()
-            if hand then
-                LocalPlayer.muscleEvent:FireServer(action, hand)
-            else
-                LocalPlayer.muscleEvent:FireServer(action)
-            end
-        end)
-    end
-
-    local function toolEquip(toolName)
-        local character, humanoid = getCharacter(LocalPlayer)
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        if not character or not backpack or not toolName or toolName == "" then
-            return
-        end
-        local tool = backpack:FindFirstChild(toolName)
-        if tool and not character:FindFirstChild(toolName) then
-            pcall(function()
-                humanoid:EquipTool(tool)
-            end)
-        end
-    end
-
-    local function toolUnequip(toolName)
-        local character = LocalPlayer.Character
-        if not character or not toolName or toolName == "" then
-            return
-        end
-        local tool = character:FindFirstChild(toolName)
-        if tool then
-            tool.Parent = LocalPlayer.Backpack
-        end
-    end
-
-    local function punchLoop(condition)
-        task.spawn(function()
-            while condition() and isAlive() do
-                local punch = equipPunch()
-                if punch then
-                    local attackTime = punch:FindFirstChild("attackTime")
-                    if attackTime then
-                        attackTime.Value = 0
-                    end
-                    pcall(function()
-                        punch:Activate()
-                    end)
+    local function applyFastTools(state)
+        for _, t in ipairs(TOOLS) do
+            local speed = state and 0 or t[3]
+            for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
+                local tool = container and container:FindFirstChild(t[1])
+                local value = tool and tool:FindFirstChild(t[2])
+                if value then
+                    value.Value = speed
                 end
-                task.wait()
             end
-        end)
-    end
-
-    local function touchRock(rockPart, hand, delay)
-        if not firetouchinterest then
-            return
         end
-        pcall(function()
-            firetouchinterest(hand, rockPart, 0)
-            if delay and delay > 0 then
-                task.wait(delay)
-            end
-            firetouchinterest(hand, rockPart, 1)
-        end)
     end
 
     Farm:Section({ Title = L("farm_tools") })
 
     local ToolDropdown = Farm:Dropdown({
         Title = L("farm_select_tool"),
-        Values = toolNames,
+        Values = namesFrom(TOOLS, 1),
         Value = nil,
         SearchBarEnabled = true,
         AllowNone = true,
@@ -2311,21 +2372,6 @@ do
     })
     Util.register("auto_tool", AutoToolToggle)
 
-    local fastToolsConn = nil
-
-    local function applyFastTools(state)
-        for _, t in ipairs(toolList) do
-            local speed = state and 0 or t[3]
-            for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
-                local tool = container and container:FindFirstChild(t[1])
-                local value = tool and tool:FindFirstChild(t[2])
-                if value then
-                    value.Value = speed
-                end
-            end
-        end
-    end
-
     local FastToolsToggle = Farm:Toggle({
         Title = L("farm_fasttools"),
         Value = false,
@@ -2348,8 +2394,6 @@ do
     })
     Util.register("fast_tools", FastToolsToggle)
 
-    local AUTO_TRAIN_PING_LIMIT = 3000
-
     local AutoTrainToggle = Farm:Toggle({
         Title = L("farm_autotrain"),
         Desc = L("farm_autotrain_desc"),
@@ -2365,40 +2409,26 @@ do
             task.spawn(function()
                 while autoTrain and isAlive() and loopGen.train == gen do
                     local character = getCharacter(LocalPlayer)
-                        if character and Util.getPing() < AUTO_TRAIN_PING_LIMIT then
-                            local punch = character:FindFirstChild("Punch")
-                            if punch and punch:IsA("Tool") then
-                                local attackTime = punch:FindFirstChild("attackTime")
-                                if attackTime and fastTools then
-                                    attackTime.Value = 0
-                                end
-                                pcall(function()
-                                    punch:Activate()
-                                end)
-                            else
-                                fireMuscle("rep")
+                    if character and Util.getPing() < AUTO_TRAIN_PING_LIMIT then
+                        local punch = character:FindFirstChild("Punch")
+                        if punch and punch:IsA("Tool") then
+                            local attackTime = punch:FindFirstChild("attackTime")
+                            if attackTime and fastTools then
+                                attackTime.Value = 0
                             end
+                            pcall(function()
+                                punch:Activate()
+                            end)
+                        else
+                            fireMuscle("rep")
                         end
+                    end
                     task.wait()
                 end
             end)
         end,
     })
     Util.register("auto_train", AutoTrainToggle)
-
-    local comboList = {
-        { "Auto Pushup + Punch Rock", "Pushups", "Industrial Rock", 0.0001 },
-        { "Auto Situp + Punch Rock", "Situps", "Industrial Rock", 0.0001 },
-        { "Auto Handstands + Punch Rock", "Handstands", "Industrial Rock", 0.0001 },
-        { "Auto Weight + Punch Rock", "Weight", "Industrial Rock", 0.0001 },
-    }
-    local comboNames = {}
-    for _, c in ipairs(comboList) do
-        table.insert(comboNames, c[1])
-    end
-
-    local selectedCombo = ""
-    local autoCombo = false
 
     local function runCombo(toolName, rockName, delay)
         local character = LocalPlayer.Character
@@ -2415,6 +2445,15 @@ do
         toolEquip(toolName)
     end
 
+    local function findCombo(label)
+        for _, c in ipairs(COMBOS) do
+            if c[1] == label then
+                return c
+            end
+        end
+        return nil
+    end
+
     Farm:Paragraph({
         Title = L("farm_combo_title"),
         Desc = L("farm_combo_desc"),
@@ -2422,7 +2461,7 @@ do
 
     local ComboDropdown = Farm:Dropdown({
         Title = L("farm_select_combo"),
-        Values = comboNames,
+        Values = namesFrom(COMBOS, 1),
         Value = nil,
         SearchBarEnabled = true,
         AllowNone = true,
@@ -2441,11 +2480,9 @@ do
             local gen = loopGen.combo
 
             if not state then
-                for _, c in ipairs(comboList) do
-                    if c[1] == selectedCombo then
-                        toolUnequip(c[2])
-                        break
-                    end
+                local combo = findCombo(selectedCombo)
+                if combo then
+                    toolUnequip(combo[2])
                 end
                 return
             end
@@ -2461,11 +2498,9 @@ do
                 while autoCombo and isAlive() and loopGen.combo == gen do
                     local character = LocalPlayer.Character
                     if character and character.Parent then
-                        for _, c in ipairs(comboList) do
-                            if c[1] == selectedCombo then
-                                runCombo(c[2], c[3], c[4])
-                                break
-                            end
+                        local combo = findCombo(selectedCombo)
+                        if combo then
+                            runCombo(combo[2], combo[3], combo[4])
                         end
                     end
                     task.wait()
@@ -2474,16 +2509,6 @@ do
         end,
     })
     Util.register("auto_combo", AutoComboToggle)
-
-    local rebirthTarget = 0
-    local autoRebirthTarget = false
-    local autoRebirthInfinite = false
-    local rebirthLock = false
-    local rebirthLockConn = nil
-    local rebirthLockCharConn = nil
-    local antiRebirthHooked = false
-    local rebirthLockSaved = nil
-    local AutoRebirthTargetToggle, AutoRebirthInfiniteToggle
 
     local function rebirthLoop(isRunning)
         task.spawn(function()
@@ -2499,91 +2524,22 @@ do
                     local ok, current = pcall(function()
                         return LocalPlayer.leaderstats.Rebirths.Value
                     end)
-            
+
                     if ok and current >= rebirthTarget then
-                    autoRebirthTarget = false
-                    pcall(function()
-                        AutoRebirthTargetToggle:Set(false)
-                    end)
-                    break
+                        autoRebirthTarget = false
+                        pcall(function()
+                            AutoRebirthTargetToggle:Set(false)
+                        end)
+                        break
+                    end
                 end
-            end
-            pcall(function()
+
+                pcall(function()
                     ReplicatedStorage.rEvents.rebirthRemote:InvokeServer("rebirthRequest")
                 end)
             end
         end)
     end
-
-    Farm:Section({ Title = L("farm_rebirths") })
-
-    Farm:Input({
-        Title = L("farm_rebirth_target"),
-        Placeholder = L("farm_rebirth_ph"),
-        Value = "",
-        Callback = function(text)
-            local n = tonumber(text)
-            if n and n > 0 then
-                rebirthTarget = n
-            end
-        end,
-    })
-
-    AutoRebirthTargetToggle = Farm:Toggle({
-        Title = L("farm_autorebirth_target"),
-        Value = false,
-        Callback = function(state)
-            autoRebirthTarget = state
-            if state then
-                if autoRebirthInfinite then
-                    autoRebirthInfinite = false
-                    pcall(function()
-                        AutoRebirthInfiniteToggle:Set(false)
-                    end)
-                end
-                if rebirthTarget <= 0 then
-                    autoRebirthTarget = false
-                    pcall(function()
-                        AutoRebirthTargetToggle:Set(false)
-                    end)
-                    return
-                end
-                loopGen.rebirth = loopGen.rebirth + 1
-                local gen = loopGen.rebirth
-                rebirthLoop(function()
-                    return autoRebirthTarget and loopGen.rebirth == gen
-                end)
-            end
-        end,
-    })
-    Util.register("auto_rebirth_target", AutoRebirthTargetToggle)
-
-    AutoRebirthInfiniteToggle = Farm:Toggle({
-        Title = L("farm_autorebirth_inf"),
-        Value = false,
-        Callback = function(state)
-            autoRebirthInfinite = state
-            if state then
-                if autoRebirthTarget then
-                    autoRebirthTarget = false
-                    pcall(function()
-                        AutoRebirthTargetToggle:Set(false)
-                    end)
-                end
-                loopGen.rebirth = loopGen.rebirth + 1
-                local gen = loopGen.rebirth
-                rebirthLoop(function()
-                    return autoRebirthInfinite and loopGen.rebirth == gen
-                end)
-            end
-        end,
-    })
-    Util.register("auto_rebirth_infinite", AutoRebirthInfiniteToggle)
-
-    Farm:Paragraph({
-        Title = L("farm_rebirth_info_title"),
-        Desc = L("farm_rebirth_info"),
-    })
 
     local function applyLock(character)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -2622,7 +2578,7 @@ do
                     hrp.CFrame = savedCFrame
                 end
             end)
-                else
+        else
             if rebirthLockSaved then
                 humanoid.WalkSpeed = rebirthLockSaved.walkSpeed
                 humanoid.JumpPower = rebirthLockSaved.jumpPower
@@ -2633,7 +2589,100 @@ do
         end
     end
 
-    local RebirthLockToggle = Farm:Toggle({
+    local function installAntiRebirth()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local ok, name = pcall(function()
+                return self.Name
+            end)
+            if ok and name
+                and not (checkcaller and checkcaller())
+                and (method == "InvokeServer" or method == "FireServer")
+                and string.find(string.lower(name), "rebirth") then
+                return nil
+            end
+            return oldNamecall(self, ...)
+        end))
+    end
+
+    local FarmRebirthFolder = Farm:Section({ Title = L("farm_rebirths"), Opened = false })
+
+    FarmRebirthFolder:Input({
+        Title = L("farm_rebirth_target"),
+        Placeholder = L("farm_rebirth_ph"),
+        Value = "",
+        Callback = function(text)
+            local n = tonumber(text)
+            if n and n > 0 then
+                rebirthTarget = n
+            end
+        end,
+    })
+
+    AutoRebirthTargetToggle = FarmRebirthFolder:Toggle({
+        Title = L("farm_autorebirth_target"),
+        Value = false,
+        Callback = function(state)
+            autoRebirthTarget = state
+            if not state then
+                return
+            end
+
+            if autoRebirthInfinite then
+                autoRebirthInfinite = false
+                pcall(function()
+                    AutoRebirthInfiniteToggle:Set(false)
+                end)
+            end
+            if rebirthTarget <= 0 then
+                autoRebirthTarget = false
+                pcall(function()
+                    AutoRebirthTargetToggle:Set(false)
+                end)
+                return
+            end
+
+            loopGen.rebirth = loopGen.rebirth + 1
+            local gen = loopGen.rebirth
+            rebirthLoop(function()
+                return autoRebirthTarget and loopGen.rebirth == gen
+            end)
+        end,
+    })
+    Util.register("auto_rebirth_target", AutoRebirthTargetToggle)
+
+    AutoRebirthInfiniteToggle = FarmRebirthFolder:Toggle({
+        Title = L("farm_autorebirth_inf"),
+        Value = false,
+        Callback = function(state)
+            autoRebirthInfinite = state
+            if not state then
+                return
+            end
+
+            if autoRebirthTarget then
+                autoRebirthTarget = false
+                pcall(function()
+                    AutoRebirthTargetToggle:Set(false)
+                end)
+            end
+
+            loopGen.rebirth = loopGen.rebirth + 1
+            local gen = loopGen.rebirth
+            rebirthLoop(function()
+                return autoRebirthInfinite and loopGen.rebirth == gen
+            end)
+        end,
+    })
+    Util.register("auto_rebirth_infinite", AutoRebirthInfiniteToggle)
+
+    FarmRebirthFolder:Paragraph({
+        Title = L("farm_rebirth_info_title"),
+        Desc = L("farm_rebirth_info"),
+    })
+
+    local RebirthLockToggle = FarmRebirthFolder:Toggle({
         Title = L("farm_lockpos"),
         Value = false,
         Callback = function(state)
@@ -2664,22 +2713,21 @@ do
     })
     Util.register("rebirth_lock", RebirthLockToggle)
 
-    Farm:Button({
+    FarmRebirthFolder:Button({
         Title = L("farm_tpking"),
         Icon = "crown",
         Callback = function()
             local character = LocalPlayer.Character
             local root = character and character:FindFirstChild("HumanoidRootPart")
             if root then
-                local base = Vector3.new(-8636, 17, -5759)
-                root.CFrame = CFrame.new(base + Vector3.new(
+                root.CFrame = CFrame.new(TP_KING_BASE + Vector3.new(
                     (math.random() * 2 - 1) * 0.3, 0, (math.random() * 2 - 1) * 0.3
                 ))
             end
         end,
     })
 
-    Farm:Button({
+    FarmRebirthFolder:Button({
         Title = L("farm_antirebirth"),
         Callback = function()
             if not hookmetamethod or not newcclosure then
@@ -2691,26 +2739,12 @@ do
                 return
             end
             antiRebirthHooked = true
-
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-                local method = getnamecallmethod()
-                local ok, name = pcall(function()
-                    return self.Name
-                end)
-                if ok and name
-                    and not (checkcaller and checkcaller())
-                    and (method == "InvokeServer" or method == "FireServer")
-                    and string.find(string.lower(name), "rebirth") then
-                    return nil
-                end
-                return oldNamecall(self, ...)
-            end))
-
+            installAntiRebirth()
             Util.notify(L("farm_antirebirth"), L("farm_antirebirth_done"), "check")
         end,
     })
-        task.spawn(function()
+
+    task.spawn(function()
         while isAlive() do
             task.wait(1)
         end
@@ -2741,12 +2775,11 @@ end
 
 do
     local Farm = Tabs.Farm
-    local CollectionService = game:GetService("CollectionService")
-    local VirtualInputManager = game:GetService("VirtualInputManager")
 
     local NOTIFY_COLOR = 0x170158
     local NOTIFY_NAME = "Mystery Notification"
     local NOTIFY_IMAGE = "https://raw.githubusercontent.com/Mystery-Center/Mystery-Media/main/Mystery%20Notificaciones%20Imagen.png"
+    local CHEST_TIMEOUT = 12
 
     local TRAIN_FLAGS = {
         "auto_tool",
@@ -2760,9 +2793,65 @@ do
         "rebirth_lock",
     }
 
+    local WebhookHosts = {
+        ["discord.com"] = true,
+        ["discordapp.com"] = true,
+        ["ptb.discord.com"] = true,
+        ["canary.discord.com"] = true,
+    }
+
+    local NUMBER_UNITS = {
+        { 1e18, "Qi" },
+        { 1e15, "Qa" },
+        { 1e12, "T" },
+        { 1e9, "B" },
+        { 1e6, "M" },
+        { 1e3, "K" },
+    }
+
     local connections = {}
     local MainToggle
     local MainDropdown
+    local lastBossScan = 0
+
+    local Training = { snapshot = nil }
+
+    local Webhook = {
+        url = "",
+        enabled = false,
+        seen = {},
+        avatar = nil,
+    }
+
+    local bossConfig = nil
+    pcall(function()
+        local shared = ReplicatedStorage:FindFirstChild("shared")
+        local folder = shared and shared:FindFirstChild("config")
+        local module = folder and folder:FindFirstChild("BossEventConfig")
+        if module then
+            bossConfig = require(module)
+        end
+    end)
+
+    local Main = {
+        running = false,
+        generation = 0,
+        continueTraining = true,
+        status = L("ab_waiting_for_boss"),
+        punchInterval = 0.3,
+        lastPunch = 0,
+        attackSequence = nil,
+        evadeUntil = 0,
+        evadeDistance = 230,
+        punchBehind = 45,
+        stompThreshold = 0.35,
+        dodgeStomps = false,
+        returnCFrame = nil,
+    }
+
+    if type(bossConfig) == "table" then
+        Main.punchInterval = math.max(0.3, (tonumber(bossConfig.MIN_HIT_INTERVAL) or 0.29) + 0.01)
+    end
 
     local function getChar()
         return LocalPlayer.Character
@@ -2778,22 +2867,36 @@ do
         return char and char:FindFirstChild("HumanoidRootPart")
     end
 
+    local function alive(state, generation)
+        return state.running and state.generation == generation and isAlive()
+    end
+
     local function shortNumber(value)
         value = tonumber(value) or 0
-        local units = {
-            { 1e18, "Qi" },
-            { 1e15, "Qa" },
-            { 1e12, "T" },
-            { 1e9, "B" },
-            { 1e6, "M" },
-            { 1e3, "K" },
-        }
-        for _, unit in ipairs(units) do
+        for _, unit in ipairs(NUMBER_UNITS) do
             if value >= unit[1] then
                 return string.format("%.2f", value / unit[1]) .. unit[2]
             end
         end
         return string.format("%.0f", value)
+    end
+
+    local function formatCountdown(seconds)
+        seconds = math.max(0, math.floor(seconds or 0))
+        return string.format("%dh %dmin %ds", math.floor(seconds / 3600), math.floor(seconds % 3600 / 60), seconds % 60)
+    end
+
+    local function isOn(element)
+        local ok, value = pcall(function()
+            return element.Value
+        end)
+        return ok and value == true
+    end
+
+    local function setElement(element, state)
+        pcall(function()
+            element:Set(state)
+        end)
     end
 
     local function newTargets()
@@ -2859,60 +2962,10 @@ do
 
     local MainTargets = newTargets()
 
-    local bossConfig = nil
-    pcall(function()
-        local shared = ReplicatedStorage:FindFirstChild("shared")
-        local folder = shared and shared:FindFirstChild("config")
-        local module = folder and folder:FindFirstChild("BossEventConfig")
-        if module then
-            bossConfig = require(module)
-        end
-    end)
-
     if type(bossConfig) == "table" and type(bossConfig.RARITIES) == "table" then
         for _, rarity in ipairs(bossConfig.RARITIES) do
             addTarget(MainTargets, rarity.BossModel, rarity.DisplayName or rarity.Name or rarity.BossModel)
         end
-    end
-
-    local Main = {
-        running = false,
-        generation = 0,
-        continueTraining = true,
-        status = L("ab_waiting_for_boss"),
-        punchInterval = 0.3,
-        lastPunch = 0,
-        attackSequence = nil,
-        evadeUntil = 0,
-        evadeDistance = 230,
-        punchBehind = 45,
-        stompThreshold = 0.35,
-        dodgeStomps = false,
-        returnCFrame = nil,
-    }
-
-    if type(bossConfig) == "table" then
-        local interval = math.max(0.3, (tonumber(bossConfig.MIN_HIT_INTERVAL) or 0.29) + 0.01)
-        Main.punchInterval = interval
-    end
-
-    local function alive(state, generation)
-        return state.running and state.generation == generation and isAlive()
-    end
-
-    local Training = { snapshot = nil }
-
-    local function isOn(element)
-        local ok, value = pcall(function()
-            return element.Value
-        end)
-        return ok and value == true
-    end
-
-    local function setElement(element, state)
-        pcall(function()
-            element:Set(state)
-        end)
     end
 
     local function leaveMachine()
@@ -3123,8 +3176,6 @@ do
         end
     end
 
-    local lastBossScan = 0
-
     local function findMainBoss()
         local model = nil
         for _, candidate in ipairs(CollectionService:GetTagged("BossEventBoss")) do
@@ -3247,7 +3298,7 @@ do
                 break
             end
             task.wait(0.1)
-        until not alive(state, generation) or os.clock() - startedAt >= 12
+        until not alive(state, generation) or os.clock() - startedAt >= CHEST_TIMEOUT
 
         if not alive(state, generation) or not chest or not part then
             return
@@ -3289,7 +3340,7 @@ do
         until not alive(state, generation)
             or LocalPlayer:GetAttribute("BossChestPending") == false
             or not chest.Parent
-            or os.clock() - startedAt >= 12
+            or os.clock() - startedAt >= CHEST_TIMEOUT
     end
 
     local function runMain(generation)
@@ -3357,123 +3408,6 @@ do
             task.wait(busy and 0.03 or 0.25)
         end
     end
-
-    local function formatCountdown(seconds)
-        seconds = math.max(0, math.floor(seconds or 0))
-        return string.format("%dh %dmin %ds", math.floor(seconds / 3600), math.floor(seconds % 3600 / 60), seconds % 60)
-    end
-
-    Farm:Section({ Title = L("boss_section") })
-
-    local MainStatus = Farm:Paragraph({
-        Title = L("boss_status_title"),
-        Desc = L("home_loading"),
-    })
-
-    MainDropdown = Farm:Dropdown({
-        Title = L("ab_target_bosses"),
-        Values = displayList(MainTargets),
-        Value = selectedList(MainTargets),
-        Multi = true,
-        AllowNone = true,
-        SearchBarEnabled = true,
-        Callback = function(options)
-            applySelection(MainTargets, options)
-        end,
-    })
-    Util.register("boss_targets", MainDropdown)
-
-    local ContinueToggle = Farm:Toggle({
-        Title = L("ab_continue_farming"),
-        Value = true,
-        Callback = function(state)
-            Main.continueTraining = state
-            if state and not Main.running then
-                resumeTraining()
-            end
-        end,
-    })
-    Util.register("boss_continue", ContinueToggle)
-
-    MainToggle = Farm:Toggle({
-        Title = L("boss_autoboss"),
-        Value = false,
-        Callback = function(state)
-            Main.generation = Main.generation + 1
-            local generation = Main.generation
-            Main.running = state
-
-            if not state then
-                returnToFarm(Main)
-                resumeTraining()
-                Main.status = L("ab_disabled")
-                return
-            end
-
-            if type(bossConfig) == "table" and bossConfig.ENABLED == false then
-                Main.running = false
-                Util.notify(L("boss_section"), L("boss_unavailable"), "triangle-alert")
-                task.defer(function()
-                    pcall(function()
-                        MainToggle:Set(false)
-                    end)
-                end)
-                return
-            end
-
-            Main.status = L("ab_waiting_for_boss")
-            task.spawn(runMain, generation)
-        end,
-    })
-    Util.register("auto_boss", MainToggle)
-
-    task.spawn(function()
-        while isAlive() do
-            pcall(function()
-                local model = findMainBoss()
-                local bossText = L("boss_none")
-                local healthText = "0 / 0"
-                local nextText
-
-                if model then
-                    local current, maximum = mainHealth(model)
-                    bossText = tostring(mainName(model))
-                    healthText = shortNumber(current) .. " / " .. shortNumber(maximum)
-                    nextText = L("ab_current_boss_active")
-                else
-                    local nextTime = workspace:GetAttribute("BossSpawnNextTime")
-                    if type(nextTime) == "number" then
-                        nextText = formatCountdown(nextTime - workspace:GetServerTimeNow())
-                    else
-                        nextText = "N/A"
-                    end
-                end
-
-                MainStatus:SetDesc(table.concat({
-                    L("boss_status") .. ": " .. Main.status,
-                    L("boss_boss") .. ": " .. bossText,
-                    L("boss_health") .. ": " .. healthText,
-                    L("boss_next") .. ": " .. nextText,
-                }, "\n"))
-            end)
-
-            task.wait(0.25)
-        end
-    end)
-
-    local Webhook = {
-        url = "",
-        enabled = false,
-        seen = {},
-        avatar = nil,
-    }
-
-    local WebhookHosts = {
-        ["discord.com"] = true,
-        ["discordapp.com"] = true,
-        ["ptb.discord.com"] = true,
-        ["canary.discord.com"] = true,
-    }
 
     local function isValidWebhook(url)
         if type(url) ~= "string" then
@@ -3588,6 +3522,252 @@ do
     table.insert(connections, workspace:GetAttributeChangedSignal("BossSpawnSequence"):Connect(observeMainSpawn))
     table.insert(connections, workspace:GetAttributeChangedSignal("BossMaxHealth"):Connect(observeMainSpawn))
 
+    Farm:Section({ Title = L("boss_section") })
+
+    local MainStatus = Farm:Paragraph({
+        Title = L("boss_status_title"),
+        Desc = L("home_loading"),
+    })
+
+    MainDropdown = Farm:Dropdown({
+        Title = L("ab_target_bosses"),
+        Values = displayList(MainTargets),
+        Value = selectedList(MainTargets),
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        Callback = function(options)
+            applySelection(MainTargets, options)
+        end,
+    })
+    Util.register("boss_targets", MainDropdown)
+
+    local ContinueToggle = Farm:Toggle({
+        Title = L("ab_continue_farming"),
+        Value = true,
+        Callback = function(state)
+            Main.continueTraining = state
+            if state and not Main.running then
+                resumeTraining()
+            end
+        end,
+    })
+    Util.register("boss_continue", ContinueToggle)
+
+    MainToggle = Farm:Toggle({
+        Title = L("boss_autoboss"),
+        Value = false,
+        Callback = function(state)
+            Main.generation = Main.generation + 1
+            local generation = Main.generation
+            Main.running = state
+
+            if not state then
+                returnToFarm(Main)
+                resumeTraining()
+                Main.status = L("ab_disabled")
+                return
+            end
+
+            if type(bossConfig) == "table" and bossConfig.ENABLED == false then
+                Main.running = false
+                Util.notify(L("boss_section"), L("boss_unavailable"), "triangle-alert")
+                task.defer(function()
+                    pcall(function()
+                        MainToggle:Set(false)
+                    end)
+                end)
+                return
+            end
+
+            Main.status = L("ab_waiting_for_boss")
+            task.spawn(runMain, generation)
+        end,
+    })
+    Util.register("auto_boss", MainToggle)
+
+    task.spawn(function()
+        while isAlive() do
+            pcall(function()
+                local model = findMainBoss()
+                local bossText = L("boss_none")
+                local healthText = "0 / 0"
+                local nextText
+
+                if model then
+                    local current, maximum = mainHealth(model)
+                    bossText = tostring(mainName(model))
+                    healthText = shortNumber(current) .. " / " .. shortNumber(maximum)
+                    nextText = L("ab_current_boss_active")
+                else
+                    local nextTime = workspace:GetAttribute("BossSpawnNextTime")
+                    if type(nextTime) == "number" then
+                        nextText = formatCountdown(nextTime - workspace:GetServerTimeNow())
+                    else
+                        nextText = "N/A"
+                    end
+                end
+
+                MainStatus:SetDesc(table.concat({
+                    L("boss_status") .. ": " .. Main.status,
+                    L("boss_boss") .. ": " .. bossText,
+                    L("boss_health") .. ": " .. healthText,
+                    L("boss_next") .. ": " .. nextText,
+                }, "\n"))
+            end)
+
+            task.wait(0.25)
+        end
+    end)
+
+    local Alien = {
+        running = false,
+        generation = 0,
+        status = L("alien_waiting"),
+        punchInterval = Main.punchInterval,
+        lastPunch = 0,
+        attackSequence = nil,
+        evadeUntil = 0,
+        evadeDistance = Main.evadeDistance,
+        punchBehind = Main.punchBehind,
+        stompThreshold = Main.stompThreshold,
+        dodgeStomps = false,
+        returnCFrame = nil,
+    }
+
+    local function findAlienBoss()
+        local model = workspace:FindFirstChild("Alien Boss")
+        if not model or not model:IsA("Model") then
+            return nil
+        end
+
+        local hitbox = model:FindFirstChild("BossDamageHitbox", true)
+            or model.PrimaryPart
+            or model:FindFirstChild("HumanoidRootPart", true)
+        if not hitbox or not hitbox:IsA("BasePart") then
+            return nil
+        end
+
+        local stats = model:FindFirstChild("stats")
+        local health = stats and stats:FindFirstChild("Health")
+        local alienHum = model:FindFirstChildOfClass("Humanoid")
+        local current = health and health.Value or (alienHum and alienHum.Health)
+        if type(current) == "number" and current <= 0 then
+            return nil
+        end
+
+        return model, hitbox
+    end
+
+    local function alienHealth(model)
+        local stats = model:FindFirstChild("stats")
+        local health = stats and stats:FindFirstChild("Health")
+        local maxHealth = stats and stats:FindFirstChild("MaxHealth")
+        local alienHum = model:FindFirstChildOfClass("Humanoid")
+        local current = health and health.Value or (alienHum and alienHum.Health) or 0
+        local maximum = maxHealth and maxHealth.Value or (alienHum and alienHum.MaxHealth) or 0
+        return tonumber(current) or 0, tonumber(maximum) or 0
+    end
+
+    local function runAlien(generation)
+        local wasFighting = false
+
+        while alive(Alien, generation) do
+            local busy = false
+
+            pcall(function()
+                local model, hitbox = findAlienBoss()
+
+                if model then
+                    busy = true
+
+                    if not wasFighting then
+                        wasFighting = true
+                        Alien.attackSequence = nil
+                        Alien.evadeUntil = 0
+                        Alien.dodgeStomps = false
+                        captureReturn(Alien)
+                        pauseTraining()
+                    end
+
+                    local humanoid = getHum()
+                    if humanoid and humanoid.Health > 0 and getRoot() then
+                        Alien.status = L("ab_fighting")
+                        attack(Alien, model, hitbox)
+                    else
+                        Alien.status = L("ab_waiting_for_respawn")
+                    end
+
+                elseif wasFighting then
+                    wasFighting = false
+                    returnToFarm(Alien)
+                    if Main.continueTraining then
+                        resumeTraining()
+                    end
+                    Alien.status = L("alien_waiting")
+
+                else
+                    Alien.status = L("alien_waiting")
+                end
+            end)
+
+            task.wait(busy and 0.03 or 0.25)
+        end
+    end
+
+    Farm:Section({ Title = L("alien_section") })
+
+    local AlienStatus = Farm:Paragraph({
+        Title = L("alien_status_title"),
+        Desc = L("home_loading"),
+    })
+
+    local AlienToggle
+    AlienToggle = Farm:Toggle({
+        Title = L("alien_autoboss"),
+        Value = false,
+        Callback = function(state)
+            Alien.generation = Alien.generation + 1
+            local generation = Alien.generation
+            Alien.running = state
+
+            if not state then
+                returnToFarm(Alien)
+                resumeTraining()
+                Alien.status = L("ab_disabled")
+                return
+            end
+
+            Alien.status = L("alien_waiting")
+            task.spawn(runAlien, generation)
+        end,
+    })
+    Util.register("auto_alien_boss", AlienToggle)
+
+    task.spawn(function()
+        while isAlive() do
+            pcall(function()
+                local model = findAlienBoss()
+                local bossText = L("boss_none")
+                local healthText = "0 / 0"
+
+                if model then
+                    local current, maximum = alienHealth(model)
+                    bossText = model.Name
+                    healthText = shortNumber(current) .. " / " .. shortNumber(maximum)
+                end
+
+                AlienStatus:SetDesc(table.concat({
+                    L("boss_status") .. ": " .. Alien.status,
+                    L("boss_boss") .. ": " .. bossText,
+                    L("boss_health") .. ": " .. healthText,
+                }, "\n"))
+            end)
+
+            task.wait(0.25)
+        end
+    end)
+
     Farm:Section({ Title = L("bw_section") })
 
     local WebhookInput = Farm:Input({
@@ -3647,6 +3827,11 @@ do
         pcall(function()
             returnToFarm(Main)
         end)
+        Alien.running = false
+        Alien.generation = Alien.generation + 1
+        pcall(function()
+            returnToFarm(Alien)
+        end)
         for _, connection in ipairs(connections) do
             pcall(function()
                 connection:Disconnect()
@@ -3660,6 +3845,26 @@ do
 
     local REBIRTH_CYCLE = 6
     local REBIRTH_TOLERANCE = 0.75
+    local MAX_EQUIPPED_PETS = 12
+    local PING_LIMIT = 3000
+    local DEFAULT_REPS_PER_TICK = 40
+    local RATE_WINDOW = 10
+
+    local ZERO_DEGREES_CF = CFrame.new(-5096.62, 47.51, 11097.66)
+    local ZERO_LIFT_CF = CFrame.new(-5372.84, 47.50, 10323.82)
+
+    local FARM_PETS = {
+        "Omega Overlord",
+        "Swift Samurai",
+        "Mythic Boss Pet",
+        "Legendary Boss Pet",
+        "Rainbow Boss Pet",
+        "Epic Boss Pet",
+        "Rare Boss Pet",
+        "Common Boss Pet",
+    }
+
+    local REBIRTH_PETS = { "Eclipse Devourer", "Titanium Hydra", "Tribal Overlord" }
 
     local function remote(name)
         local events = ReplicatedStorage:FindFirstChild("rEvents")
@@ -3686,10 +3891,7 @@ do
 
     local function formatNumber(n)
         n = tonumber(n) or 0
-        local sign = ""
-        if n < 0 then
-            sign = "-"
-        end
+        local sign = n < 0 and "-" or ""
         n = math.abs(n)
 
         if n >= 1e15 then
@@ -3713,10 +3915,8 @@ do
             sign = "-"
             text = text:sub(2)
         end
-        local reversed = text:reverse()
-        reversed = reversed:gsub("(%d%d%d)", "%1,")
-        local result = reversed:reverse()
-        result = result:gsub("^,", "")
+        local reversed = text:reverse():gsub("(%d%d%d)", "%1,")
+        local result = reversed:reverse():gsub("^,", "")
         return sign .. result
     end
 
@@ -3756,7 +3956,17 @@ do
         end)
     end
 
-    local repsPerTick = 1
+    local function teleportOnly(cf)
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            return
+        end
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.CFrame = cf
+    end
+
+    local repsPerTick = DEFAULT_REPS_PER_TICK
     local fastRepEnabled = false
     local fastRepRunning = false
 
@@ -3768,7 +3978,6 @@ do
         initDurability = 0,
         strengthHistory = {},
         durabilityHistory = {},
-        interval = 10,
     }
 
     Packs:Section({ Title = L("pk_fast_strength_section") })
@@ -3780,7 +3989,7 @@ do
 
     local RepsInput = Packs:Input({
         Title = L("pk_reps_speed"),
-        Placeholder = "40",
+        Placeholder = tostring(DEFAULT_REPS_PER_TICK),
         Value = "",
         Callback = function(text)
             local n = tonumber(text)
@@ -3793,7 +4002,7 @@ do
 
     local function fastRepLoop()
         while fastRepEnabled and isAlive() do
-            if Util.getPing() < 3000 then
+            if Util.getPing() < PING_LIMIT then
                 local muscleEvent = LocalPlayer:FindFirstChild("muscleEvent")
                 if muscleEvent then
                     for _ = 1, repsPerTick do
@@ -3813,14 +4022,13 @@ do
             fastRepEnabled = state
 
             if state then
-                local now = os.clock()
                 if track.paused == 0 then
                     track.initStrength = getStrength()
                     track.initDurability = getDurability()
                     track.strengthHistory = {}
                     track.durabilityHistory = {}
                 end
-                track.startTime = now
+                track.startTime = os.clock()
                 track.running = true
 
                 if not fastRepRunning then
@@ -3835,149 +4043,12 @@ do
     })
     Util.register("fast_reps", StartToggle)
 
-    local ZERO_DEGREES_CF = CFrame.new(-5096.62, 47.51, 11097.66)
-    local MACHINE_SEARCH_RADIUS = 25
-    local SETTLE_DELAY = 0.4
-    local SIT_CHECK_DELAY = 0.5
-
-    local function nearestSeat(position)
-        local folder = workspace:FindFirstChild("machinesFolder")
-        if not folder then
-            return nil
-        end
-        local best, bestDist = nil, MACHINE_SEARCH_RADIUS
-        for _, object in ipairs(folder:GetDescendants()) do
-            if object.Name == "interactSeat" and object:IsA("BasePart") then
-                local dist = (object.Position - position).Magnitude
-                if dist < bestDist then
-                    best, bestDist = object, dist
-                end
-            end
-        end
-        return best
-    end
-
-    local function nearestPrompt(position)
-        local best, bestDist = nil, MACHINE_SEARCH_RADIUS
-        for _, object in ipairs(workspace:GetDescendants()) do
-            if object:IsA("ProximityPrompt") and object.Enabled then
-                local holder = object.Parent
-                if holder and holder:IsA("Attachment") then
-                    holder = holder.Parent
-                end
-                if holder and holder:IsA("BasePart") then
-                    local dist = (holder.Position - position).Magnitude
-                    if dist < bestDist then
-                        best, bestDist = object, dist
-                    end
-                end
-            end
-        end
-        return best
-    end
-
-    local function isSeated()
-        local character = LocalPlayer.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        return humanoid ~= nil and humanoid.SeatPart ~= nil
-    end
-
-    local function teleportAndSit(cf)
-        local character = LocalPlayer.Character
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        if not root then
-            return
-        end
-
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.CFrame = cf
-        task.wait(SETTLE_DELAY)
-
-        local seat = nearestSeat(root.Position)
-        local interact = remote("machineInteractRemote")
-        if seat and interact then
-            pcall(function()
-                interact:InvokeServer("useMachine", seat)
-            end)
-            task.wait(SIT_CHECK_DELAY)
-            if isSeated() then
-                return
-            end
-        end
-
-        local prompt = nearestPrompt(root.Position)
-        if prompt and type(fireproximityprompt) == "function" then
-            pcall(fireproximityprompt, prompt)
-            task.wait(SIT_CHECK_DELAY)
-            if isSeated() then
-                return
-            end
-        end
-
-        pcall(function()
-            local vim = game:GetService("VirtualInputManager")
-            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.1)
-            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
-    end
-
     Packs:Button({
         Title = L("pk_zero_degrees"),
         Callback = function()
-            teleportAndSit(ZERO_DEGREES_CF)
+            teleportOnly(ZERO_DEGREES_CF)
         end,
     })
-
-    local function forEachPet(folder, callback)
-        if not folder then
-            return
-        end
-        for _, group in ipairs(folder:GetChildren()) do
-            if group:IsA("Folder") then
-                for _, pet in ipairs(group:GetChildren()) do
-                    callback(pet)
-                end
-            end
-        end
-    end
-
-    local function petAction(action, pet)
-        local equipEvent = remote("equipPetEvent")
-        if equipEvent then
-            pcall(function()
-                equipEvent:FireServer(action, pet)
-            end)
-        end
-    end
-
-    local function unequipAllPets()
-        local folder = LocalPlayer:FindFirstChild("petsFolder")
-        forEachPet(folder, function(pet)
-            petAction("unequipPet", pet)
-        end)
-        task.wait(0.1)
-    end
-
-    local function equipPriorityPets(names)
-        local folder = LocalPlayer:FindFirstChild("petsFolder")
-        if not folder then
-            return
-        end
-
-        local equipped = 0
-        for _, name in ipairs(names) do
-            if equipped >= 12 then
-                break
-            end
-            forEachPet(folder, function(pet)
-                if equipped < 12 and pet.Name == name then
-                    petAction("equipPet", pet)
-                    equipped = equipped + 1
-                end
-            end)
-        end
-    end
 
     Packs:Divider()
 
@@ -4007,6 +4078,20 @@ do
             .. L("pk_durability") .. ": 0\n"
             .. L("pk_gained") .. ": 0",
     })
+
+    local function windowRate(history)
+        local first, last = history[1], history[#history]
+        if #history >= 2 and last.time > first.time then
+            return rateList((last.value - first.value) / (last.time - first.time), formatBoth)
+        end
+        return nil
+    end
+
+    local function trimHistory(history, now)
+        while history[1] and now - history[1].time > RATE_WINDOW do
+            table.remove(history, 1)
+        end
+    end
 
     task.spawn(function()
         local lastCalc = os.clock()
@@ -4045,35 +4130,13 @@ do
 
                 table.insert(track.strengthHistory, { time = now, value = strength })
                 table.insert(track.durabilityHistory, { time = now, value = durability })
+                trimHistory(track.strengthHistory, now)
+                trimHistory(track.durabilityHistory, now)
 
-                while track.strengthHistory[1]
-                    and now - track.strengthHistory[1].time > track.interval do
-                    table.remove(track.strengthHistory, 1)
-                end
-                while track.durabilityHistory[1]
-                    and now - track.durabilityHistory[1].time > track.interval do
-                    table.remove(track.durabilityHistory, 1)
-                end
-
-                if now - lastCalc >= track.interval then
+                if now - lastCalc >= RATE_WINDOW then
                     lastCalc = now
-
-                    local sh = track.strengthHistory
-                    local dh = track.durabilityHistory
-
-                    if #sh >= 2 and sh[#sh].time > sh[1].time then
-                        strengthRates = rateList(
-                            (sh[#sh].value - sh[1].value) / (sh[#sh].time - sh[1].time),
-                            formatBoth
-                        )
-                    end
-
-                    if #dh >= 2 and dh[#dh].time > dh[1].time then
-                        durabilityRates = rateList(
-                            (dh[#dh].value - dh[1].value) / (dh[#dh].time - dh[1].time),
-                            formatBoth
-                        )
-                    end
+                    strengthRates = windowRate(track.strengthHistory) or strengthRates
+                    durabilityRates = windowRate(track.durabilityHistory) or durabilityRates
                 end
 
                 render(elapsed, L("pk_running"), ping, strength, durability)
@@ -4106,6 +4169,55 @@ do
         Title = L("pk_rb_calc"),
         Desc = zeroRebirths,
     })
+
+    local function forEachPet(folder, callback)
+        if not folder then
+            return
+        end
+        for _, group in ipairs(folder:GetChildren()) do
+            if group:IsA("Folder") then
+                for _, pet in ipairs(group:GetChildren()) do
+                    callback(pet)
+                end
+            end
+        end
+    end
+
+    local function petAction(action, pet)
+        local equipEvent = remote("equipPetEvent")
+        if equipEvent then
+            pcall(function()
+                equipEvent:FireServer(action, pet)
+            end)
+        end
+    end
+
+    local function unequipAllPets()
+        forEachPet(LocalPlayer:FindFirstChild("petsFolder"), function(pet)
+            petAction("unequipPet", pet)
+        end)
+        task.wait(0.1)
+    end
+
+    local function equipPriorityPets(names)
+        local folder = LocalPlayer:FindFirstChild("petsFolder")
+        if not folder then
+            return
+        end
+
+        local equipped = 0
+        for _, name in ipairs(names) do
+            if equipped >= MAX_EQUIPPED_PETS then
+                break
+            end
+            forEachPet(folder, function(pet)
+                if equipped < MAX_EQUIPPED_PETS and pet.Name == name then
+                    petAction("equipPet", pet)
+                    equipped = equipped + 1
+                end
+            end)
+        end
+    end
 
     local fastRebirth = false
     local rbGen = 0
@@ -4149,11 +4261,9 @@ do
             return
         end
 
-        local first = events[1]
-        local last = events[#events]
+        local first, last = events[1], events[#events]
         local span = last.time - first.time
         local gained = last.count - first.count
-
         if span <= 0 or gained <= 0 then
             return
         end
@@ -4170,7 +4280,7 @@ do
     local rebirthValue = leaderstats and leaderstats:FindFirstChild("Rebirths")
 
     if rebirthValue then
-        local rebirthConnection = nil
+        local rebirthConnection
         rebirthConnection = rebirthValue:GetPropertyChangedSignal("Value"):Connect(function()
             if not isAlive() then
                 rebirthConnection:Disconnect()
@@ -4190,8 +4300,6 @@ do
     end
 
     local function getStrengthRequiredForRebirth()
-        local rebirths = getRebirths()
-
         local golden = 0
         local ultimates = LocalPlayer:FindFirstChild("ultimatesFolder")
         local goldenValue = ultimates and ultimates:FindFirstChild("Golden Rebirth")
@@ -4199,7 +4307,7 @@ do
             golden = tonumber(goldenValue.Value) or 0
         end
 
-        local base = 10000 + 2500 * rebirths
+        local base = 10000 + 2500 * getRebirths()
         if golden >= 1 and golden <= 5 then
             base = base * (1 - golden * 0.1)
         end
@@ -4220,7 +4328,6 @@ do
                     rbTrack.paused = rbTrack.paused + (os.clock() - rbTrack.startTime)
                     rbTrack.tracking = false
                 end
-
                 renderRebirthInfo()
                 setDesc(RebirthRateParagraph, zeroRebirths)
                 return
@@ -4238,23 +4345,18 @@ do
             renderRebirthInfo()
             setDesc(RebirthRateParagraph, zeroRebirths)
 
+            local function active()
+                return fastRebirth and isAlive() and rbGen == gen
+            end
+
             task.spawn(function()
-                while fastRebirth and isAlive() and rbGen == gen do
+                while active() do
                     local requiredStrength = getStrengthRequiredForRebirth()
 
                     unequipAllPets()
-                    equipPriorityPets({
-                        "Omega Overlord",
-                        "Swift Samurai",
-                        "Mythic Boss Pet",
-                        "Legendary Boss Pet",
-                        "Rainbow Boss Pet",
-                        "Epic Boss Pet",
-                        "Rare Boss Pet",
-                        "Common Boss Pet",
-                    })
+                    equipPriorityPets(FARM_PETS)
 
-                    while getStrength() < requiredStrength and fastRebirth and isAlive() and rbGen == gen do
+                    while getStrength() < requiredStrength and active() do
                         local muscleEvent = LocalPlayer:FindFirstChild("muscleEvent")
                         if muscleEvent then
                             for _ = 1, 10 do
@@ -4264,9 +4366,9 @@ do
                         task.wait()
                     end
 
-                    if fastRebirth and isAlive() and rbGen == gen then
+                    if active() then
                         unequipAllPets()
-                        equipPriorityPets({ "Eclipse Devourer", "Titanium Hydra", "Tribal Overlord" })
+                        equipPriorityPets(REBIRTH_PETS)
 
                         local oldRebirths = getRebirths()
                         local rebirthRemote = remote("rebirthRemote")
@@ -4278,7 +4380,7 @@ do
                                 end)
                             end
                             task.wait(0.1)
-                        until getRebirths() > oldRebirths or not fastRebirth or not isAlive() or rbGen ~= gen
+                        until getRebirths() > oldRebirths or not active()
                     end
 
                     task.wait()
@@ -4288,12 +4390,10 @@ do
     })
     Util.register("fast_rebirth", FastRebirthToggle)
 
-    local ZERO_LIFT_CF = CFrame.new(-5372.84, 47.50, 10323.82)
-
     RebirthFolder:Button({
         Title = L("pk_zero_lift"),
         Callback = function()
-            teleportAndSit(ZERO_LIFT_CF)
+            teleportOnly(ZERO_LIFT_CF)
         end,
     })
 end
