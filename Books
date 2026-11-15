@@ -3620,154 +3620,6 @@ do
         end
     end)
 
-    local Alien = {
-        running = false,
-        generation = 0,
-        status = L("alien_waiting"),
-        punchInterval = Main.punchInterval,
-        lastPunch = 0,
-        attackSequence = nil,
-        evadeUntil = 0,
-        evadeDistance = Main.evadeDistance,
-        punchBehind = Main.punchBehind,
-        stompThreshold = Main.stompThreshold,
-        dodgeStomps = false,
-        returnCFrame = nil,
-    }
-
-    local function findAlienBoss()
-        local model = workspace:FindFirstChild("Alien Boss")
-        if not model or not model:IsA("Model") then
-            return nil
-        end
-
-        local hitbox = model:FindFirstChild("BossDamageHitbox", true)
-            or model.PrimaryPart
-            or model:FindFirstChild("HumanoidRootPart", true)
-        if not hitbox or not hitbox:IsA("BasePart") then
-            return nil
-        end
-
-        local stats = model:FindFirstChild("stats")
-        local health = stats and stats:FindFirstChild("Health")
-        local alienHum = model:FindFirstChildOfClass("Humanoid")
-        local current = health and health.Value or (alienHum and alienHum.Health)
-        if type(current) == "number" and current <= 0 then
-            return nil
-        end
-
-        return model, hitbox
-    end
-
-    local function alienHealth(model)
-        local stats = model:FindFirstChild("stats")
-        local health = stats and stats:FindFirstChild("Health")
-        local maxHealth = stats and stats:FindFirstChild("MaxHealth")
-        local alienHum = model:FindFirstChildOfClass("Humanoid")
-        local current = health and health.Value or (alienHum and alienHum.Health) or 0
-        local maximum = maxHealth and maxHealth.Value or (alienHum and alienHum.MaxHealth) or 0
-        return tonumber(current) or 0, tonumber(maximum) or 0
-    end
-
-    local function runAlien(generation)
-        local wasFighting = false
-
-        while alive(Alien, generation) do
-            local busy = false
-
-            pcall(function()
-                local model, hitbox = findAlienBoss()
-
-                if model then
-                    busy = true
-
-                    if not wasFighting then
-                        wasFighting = true
-                        Alien.attackSequence = nil
-                        Alien.evadeUntil = 0
-                        Alien.dodgeStomps = false
-                        captureReturn(Alien)
-                        pauseTraining()
-                    end
-
-                    local humanoid = getHum()
-                    if humanoid and humanoid.Health > 0 and getRoot() then
-                        Alien.status = L("ab_fighting")
-                        attack(Alien, model, hitbox)
-                    else
-                        Alien.status = L("ab_waiting_for_respawn")
-                    end
-
-                elseif wasFighting then
-                    wasFighting = false
-                    returnToFarm(Alien)
-                    if Main.continueTraining then
-                        resumeTraining()
-                    end
-                    Alien.status = L("alien_waiting")
-
-                else
-                    Alien.status = L("alien_waiting")
-                end
-            end)
-
-            task.wait(busy and 0.03 or 0.25)
-        end
-    end
-
-    Farm:Section({ Title = L("alien_section") })
-
-    local AlienStatus = Farm:Paragraph({
-        Title = L("alien_status_title"),
-        Desc = L("home_loading"),
-    })
-
-    local AlienToggle
-    AlienToggle = Farm:Toggle({
-        Title = L("alien_autoboss"),
-        Value = false,
-        Callback = function(state)
-            Alien.generation = Alien.generation + 1
-            local generation = Alien.generation
-            Alien.running = state
-
-            if not state then
-                returnToFarm(Alien)
-                resumeTraining()
-                Alien.status = L("ab_disabled")
-                return
-            end
-
-            Alien.status = L("alien_waiting")
-            task.spawn(runAlien, generation)
-        end,
-    })
-    Util.register("auto_alien_boss", AlienToggle)
-
-    task.spawn(function()
-        while isAlive() do
-            pcall(function()
-                local model = findAlienBoss()
-                local bossText = L("boss_none")
-                local healthText = "0 / 0"
-
-                if model then
-                    local current, maximum = alienHealth(model)
-                    bossText = model.Name
-                    healthText = shortNumber(current) .. " / " .. shortNumber(maximum)
-                end
-
-                AlienStatus:SetDesc(table.concat({
-                    L("boss_status") .. ": " .. Alien.status,
-                    L("boss_boss") .. ": " .. bossText,
-                    L("boss_health") .. ": " .. healthText,
-                }, "\n"))
-            end)
-
-            task.wait(0.25)
-        end
-    end)
-
     Farm:Section({ Title = L("bw_section") })
 
     local WebhookInput = Farm:Input({
@@ -3827,11 +3679,6 @@ do
         pcall(function()
             returnToFarm(Main)
         end)
-        Alien.running = false
-        Alien.generation = Alien.generation + 1
-        pcall(function()
-            returnToFarm(Alien)
-        end)
         for _, connection in ipairs(connections) do
             pcall(function()
                 connection:Disconnect()
@@ -3847,8 +3694,15 @@ do
     local REBIRTH_TOLERANCE = 0.75
     local MAX_EQUIPPED_PETS = 12
     local PING_LIMIT = 3000
-    local DEFAULT_REPS_PER_TICK = 40
     local RATE_WINDOW = 10
+
+    local MIN_REPS = 60
+    local DEFAULT_REPS_PER_TICK = 60
+    local TURBO_MULTIPLIER = 2.5
+    local PING_SOFT = 450
+    local PING_RECOVER = 300
+    local PING_SAMPLE = 0.25
+    local MIN_SCALE = 0.3
 
     local ZERO_DEGREES_CF = CFrame.new(-5096.62, 47.51, 11097.66)
     local ZERO_LIFT_CF = CFrame.new(-5372.84, 47.50, 10323.82)
@@ -3967,6 +3821,8 @@ do
     end
 
     local repsPerTick = DEFAULT_REPS_PER_TICK
+    local turboEnabled = false
+    local currentReps = 0
     local fastRepEnabled = false
     local fastRepRunning = false
 
@@ -3987,31 +3843,82 @@ do
         Desc = "",
     })
 
-    local RepsInput = Packs:Input({
+    local RepsInput
+    RepsInput = Packs:Input({
         Title = L("pk_reps_speed"),
         Placeholder = tostring(DEFAULT_REPS_PER_TICK),
         Value = "",
         Callback = function(text)
             local n = tonumber(text)
-            if n and n > 0 then
-                repsPerTick = math.floor(n)
+            if not n then
+                return
+            end
+            n = math.max(MIN_REPS, math.floor(n))
+            repsPerTick = n
+            if n ~= tonumber(text) then
+                pcall(function()
+                    RepsInput:Set(tostring(n))
+                end)
             end
         end,
     })
     Util.register("reps_speed", RepsInput)
 
+    local TurboToggle = Packs:Toggle({
+        Title = "Turbo",
+        Desc = "x" .. TURBO_MULTIPLIER .. " reps. Se ajusta solo segun el ping.",
+        Value = false,
+        Callback = function(state)
+            turboEnabled = state
+        end,
+    })
+    Util.register("reps_turbo", TurboToggle)
+
     local function fastRepLoop()
+        local event = nil
+        local ping = 0
+        local lastSample = 0
+        local scale = 1
+
         while fastRepEnabled and isAlive() do
-            if Util.getPing() < PING_LIMIT then
-                local muscleEvent = LocalPlayer:FindFirstChild("muscleEvent")
-                if muscleEvent then
-                    for _ = 1, repsPerTick do
-                        muscleEvent:FireServer("rep")
-                    end
+            local now = os.clock()
+
+            if now - lastSample >= PING_SAMPLE then
+                lastSample = now
+                ping = Util.getPing()
+
+                if ping > PING_SOFT then
+                    scale = math.max(MIN_SCALE, scale * 0.85)
+                elseif ping < PING_RECOVER then
+                    scale = math.min(1, scale + 0.1)
                 end
             end
+
+            if ping < PING_LIMIT then
+                if not event or not event.Parent then
+                    event = LocalPlayer:FindFirstChild("muscleEvent")
+                end
+
+                if event then
+                    local count = repsPerTick * scale
+                    if turboEnabled then
+                        count = count * TURBO_MULTIPLIER
+                    end
+                    count = math.max(1, math.floor(count))
+                    currentReps = count
+
+                    for _ = 1, count do
+                        event:FireServer("rep")
+                    end
+                end
+            else
+                currentReps = 0
+            end
+
             task.wait()
         end
+
+        currentReps = 0
         fastRepRunning = false
     end
 
@@ -4058,7 +3965,8 @@ do
         Title = L("pk_time_title"),
         Desc = L("pk_time") .. ": 0d 0h 0m 0s\n"
             .. L("pk_fastreps") .. ": " .. L("pk_off") .. "\n"
-            .. L("pk_ping") .. ": 0 ms",
+            .. L("pk_ping") .. ": 0 ms\n"
+            .. "Reps/tick: 0",
     })
 
     local StrengthParagraph = Packs:Paragraph({
@@ -4103,6 +4011,7 @@ do
                 L("pk_time") .. ": " .. formatDuration(elapsed),
                 L("pk_fastreps") .. ": " .. statusText,
                 L("pk_ping") .. ": " .. ping .. " ms",
+                "Reps/tick: " .. currentReps,
             }, "\n"))
 
             setDesc(StrengthParagraph, strengthRates)
@@ -9696,6 +9605,7 @@ do
         "Legend Gym",
         "Muscle King Gym",
         "Jungle Gym",
+        "Industrial Gym",
     }
 
     local workoutPositions = {
@@ -9707,6 +9617,7 @@ do
             ["Legend Gym"] = CFrame.new(4111.91748, 1020.46674, -3799.97217),
             ["Muscle King Gym"] = CFrame.new(-8590.06152, 46.0167427, -6043.34717),
             ["Jungle Gym"] = CFrame.new(-8173, 64, 1898),
+            ["Industrial Gym"] = Cframe.new(-5012.56, 117.92, 4473.92),
         },
         ["Squat"] = {
             ["Starter Island"] = CFrame.new(-48.8711243, 3.31417918, -11.8831778),
@@ -9717,6 +9628,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8352, 34, 2878),
+            ["Industrial Gym"] = Cframe.new(-5219.50, 61.06, 5419.80),
         },
         ["Deadlift"] = {
             ["Starter Island"] = CFrame.new(-48.8711243, 3.31417918, -11.8831778),
@@ -9736,6 +9648,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8666, 34, 2070),
+            ["Industrial Gym"] = Cframe.new(-5491.40, 61.06, 4644.60),
         },
         ["Boulder"] = {
             ["Starter Island"] = CFrame.new(-33.3047485, 3.31417918, -11.8831778),
@@ -9746,6 +9659,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8621, 34, 2684),
+            ["Industrial Gym"] = Cframe.new(-5450.07, 61.06, 5237.17),
         },
     }
 
@@ -9755,24 +9669,24 @@ do
         "Legend Beach",
         "Frost Gym",
         "Mythical Gym",
-        "Eternal Gym",
         "Legend Gym",
         "Jungle Gym",
+        "Industrial Gym"
     }
 
     local treadmillPositions = {
-        ["Tiny Island"] = CFrame.new(-31.8626194, 6.0588026, 2087.88672, -0.999396682, -9.72631931e-09, 0.034730725, -6.63278898e-09, 1, 8.91870684e-08, -0.034730725, 8.8902901e-08, -0.999396682),
-        ["Starter Island"] = CFrame.new(226.252472, 8.1526947, 219.366516, -0.00880406145, 3.58277887e-08, -0.999961257, -4.41204939e-08, 1, 3.62176351e-08, 0.999961257, 4.44376482e-08, -0.00880406145),
+        ["Tiny Island"] = CFrame.new(-32.50, 10.20, 2092.80),
+        ["Starter Island"] = CFrame.new(220.10, 12.50, 220.50),
         ["Legend Beach"] = CFrame.new(-365.798309, 44.5082932, -501.618591, 0.00878552441, -6.19950713e-09, 0.999961436, -4.37451603e-10, 1, 6.20358964e-09, -0.999961436, -4.91936492e-10, 0.00878552441),
         ["Frost Gym"] = CFrame.new(-2933.47998, 29.6399612, -579.946045, 0.0345239155, -1.03010173e-07, 0.999403894, 1.03015294e-08, 1, 1.02715752e-07, -0.999403894, 6.74923806e-09, 0.0345239155),
         ["Mythical Gym"] = CFrame.new(2659.50635, 21.6095238, 934.690613, 0.999999881, 4.98906161e-08, 0.000502891606, -4.98585742e-08, 1, -6.37288338e-08, -0.000502891606, 6.37037516e-08, 0.999999881),
-        ["Eternal Gym"] = CFrame.new(-7176.19141, 45.394104, -1106.31421, 0.971191287, -2.38377185e-09, 0.238301158, 1.41694778e-09, 1, 4.22844915e-09, -0.238301158, -3.76897269e-09, 0.971191287),
-        ["Legend Gym"] = CFrame.new(4446.91699, 1004.46698, -3983.76074, -0.999961317, -1.97616366e-08, 0.00879266672, -1.93830077e-08, 1, 4.31365149e-08, -0.00879266672, 4.29661292e-08, -0.999961317),
+        ["Legend Gym"] = CFrame.new(4360.50, 1003.50, -3636.30),
         ["Jungle Gym"] = CFrame.new(-8137, 28, 2820),
+        ["Industrial Gym"] = CFrame.new(-4973.71, 85.89, 5354.38),
     }
 
     local islandList = {
-        { name = "Spawn", cf = CFrame.new(2, 8, 115) },
+        { name = "Spawn", cf = CFrame.new(1.85, 7.95, 114.38) },
         { name = "Secret Area", cf = CFrame.new(1947, 2, 6191) },
         { name = "Tiny Island", cf = CFrame.new(-34, 7, 1903) },
         { name = "Frozen Island", cf = CFrame.new(-2600.00244, 3.67686558, -403.884369, 0.0873617008, 1.0482899e-09, 0.99617666, 3.07204253e-08, 1, -3.7464023e-09, -0.99617666, 3.09302628e-08, 0.0873617008) },
@@ -9782,6 +9696,8 @@ do
         { name = "Muscle King Island", cf = CFrame.new(-8646, 17, -5738) },
         { name = "Jungle Island", cf = CFrame.new(-8659, 6, 2384) },
         { name = "Industrial Gym", cf = CFrame.new(-5563.2, 58.31, 4942.44) },
+        { name = "Zero Degrees Gym", cf = CFrame.new(303.32, 18.32, 362.74) },
+        { name = "Alien Gym", cf = CFrame.new(2.30, 7.95, -80.66) },
     }
 
     local brawlList = {
