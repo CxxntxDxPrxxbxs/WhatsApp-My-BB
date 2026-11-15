@@ -1118,6 +1118,18 @@ function Util.sanitizeName(name)
     return clean:sub(1, 32)
 end
 
+local lastDescs = setmetatable({}, { __mode = "k" })
+
+function Util.setDesc(paragraph, text)
+    if lastDescs[paragraph] == text then
+        return
+    end
+    lastDescs[paragraph] = text
+    pcall(function()
+        paragraph:SetDesc(text)
+    end)
+end
+
 local Logger = {}
 
 Logger.Colors = {
@@ -1810,7 +1822,7 @@ do
     task.spawn(function()
         while task.wait(1) and isAlive() do
             pcall(function()
-                ServerParagraph:SetDesc(table.concat({
+                Util.setDesc(ServerParagraph, table.concat({
                     L("home_players") .. ": " .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers,
                     L("home_fps") .. ": " .. fps,
                     L("home_ping") .. ": " .. Util.getPing() .. " ms",
@@ -3660,7 +3672,7 @@ do
                     end
                 end
 
-                MainStatus:SetDesc(table.concat({
+                Util.setDesc(MainStatus, table.concat({
                     L("boss_status") .. ": " .. Main.status,
                     L("boss_boss") .. ": " .. bossText,
                     L("boss_health") .. ": " .. healthText,
@@ -3729,27 +3741,43 @@ do
         return humanoid ~= nil and humanoid.Health <= 0
     end
 
+    local alienCache = { model = nil, lastScan = 0 }
+
     local function findAlienBoss()
         local model = workspace:FindFirstChild("Alien Boss")
 
         if not (model and model:IsA("Model")) then
             model = nil
 
-            local healthValue = workspace:FindFirstChild("alienBossHealth", true)
-            if healthValue and healthValue:IsA("ValueBase") and healthValue.Value > 0 then
-                model = healthValue:FindFirstAncestorOfClass("Model")
-            end
+            local cached = alienCache.model
+            if cached and cached.Parent and cached:IsDescendantOf(workspace) then
+                model = cached
+            else
+                alienCache.model = nil
 
-            if not model then
-                for _, candidate in ipairs(workspace:GetDescendants()) do
-                    if candidate:IsA("Model") then
-                        local name = string.lower(candidate.Name)
-                        if (string.find(name, "alien boss", 1, true) or string.find(name, "alienboss", 1, true))
-                            and not string.find(name, "arena", 1, true) then
-                            model = candidate
-                            break
+                local now = os.clock()
+                if now - alienCache.lastScan >= 4 then
+                    alienCache.lastScan = now
+
+                    local healthValue = workspace:FindFirstChild("alienBossHealth", true)
+                    if healthValue and healthValue:IsA("ValueBase") and healthValue.Value > 0 then
+                        model = healthValue:FindFirstAncestorOfClass("Model")
+                    end
+
+                    if not model then
+                        for _, candidate in ipairs(workspace:GetDescendants()) do
+                            if candidate:IsA("Model") then
+                                local name = string.lower(candidate.Name)
+                                if (string.find(name, "alien boss", 1, true) or string.find(name, "alienboss", 1, true))
+                                    and not string.find(name, "arena", 1, true) then
+                                    model = candidate
+                                    break
+                                end
+                            end
                         end
                     end
+
+                    alienCache.model = model
                 end
             end
         end
@@ -4080,7 +4108,7 @@ do
                     healthText = alienHealth(model)
                 end
 
-                AlienStatus:SetDesc(table.concat({
+                Util.setDesc(AlienStatus, table.concat({
                     L("boss_status") .. ": " .. Alien.status,
                     L("boss_boss") .. ": " .. bossText,
                     L("boss_health") .. ": " .. healthText,
@@ -4329,11 +4357,7 @@ do
         }, "\n")
     end
 
-    local function setDesc(paragraph, text)
-        pcall(function()
-            paragraph:SetDesc(text)
-        end)
-    end
+    local setDesc = Util.setDesc
 
     local function teleportOnly(cf)
         local character = LocalPlayer.Character
@@ -5629,20 +5653,25 @@ do
     end
 
     local function applyPlayerCfg()
-    if not (PlayerCfg.speed.enabled or PlayerCfg.jump.enabled or PlayerCfg.gravity.enabled) then
-        return
-    end
+        if not (PlayerCfg.speed.enabled or PlayerCfg.jump.enabled or PlayerCfg.gravity.enabled) then
+            return
+        end
+
         local humanoid = getHumanoid()
         if humanoid then
-            if PlayerCfg.speed.enabled then
+            if PlayerCfg.speed.enabled and humanoid.WalkSpeed ~= PlayerCfg.speed.value then
                 humanoid.WalkSpeed = PlayerCfg.speed.value
             end
             if PlayerCfg.jump.enabled then
-                humanoid.UseJumpPower = true
-                humanoid.JumpPower = PlayerCfg.jump.value
+                if not humanoid.UseJumpPower then
+                    humanoid.UseJumpPower = true
+                end
+                if humanoid.JumpPower ~= PlayerCfg.jump.value then
+                    humanoid.JumpPower = PlayerCfg.jump.value
+                end
             end
         end
-        if PlayerCfg.gravity.enabled then
+        if PlayerCfg.gravity.enabled and workspace.Gravity ~= PlayerCfg.gravity.value then
             workspace.Gravity = PlayerCfg.gravity.value
         end
     end
@@ -6123,19 +6152,27 @@ do
                 end
 
                 task.spawn(function()
-                    local startCount = countAll(itemName)
-                    local target = math.min(E.amount, startCount)
+                    local target = math.min(E.amount, countAll(itemName))
                     local eaten = 0
                     local reason = nil
 
                     if target <= 0 then
                         reason = L("sn_eat_none")
                     else
+                        local RETRY_AFTER = 1.5
+                        local sentTools = {}
+                        local sentCount = 0
                         local lastEaten = 0
                         local lastProgress = os.clock()
 
                         while E.auto and isAlive() and E.autoGen == gen do
-                            eaten = startCount - countAll(itemName)
+                            eaten = 0
+                            for tool in pairs(sentTools) do
+                                if not tool.Parent then
+                                    eaten = eaten + 1
+                                end
+                            end
+
                             if eaten >= target then
                                 break
                             end
@@ -6148,14 +6185,34 @@ do
                                 break
                             end
 
-                            burstEat(itemName, eventName, target - eaten)
+                            local event = LocalPlayer:FindFirstChild("muscleEvent")
+                            if event then
+                                local now = os.clock()
+                                for _, tool in ipairs(getTools(itemName)) do
+                                    local last = sentTools[tool]
+                                    if last == nil then
+                                        if sentCount < target then
+                                            sentTools[tool] = now
+                                            sentCount = sentCount + 1
+                                            pcall(event.FireServer, event, eventName, tool)
+                                        end
+                                    elseif now - last > RETRY_AFTER then
+                                        sentTools[tool] = now
+                                        pcall(event.FireServer, event, eventName, tool)
+                                    end
+                                end
+
+                                if sentCount < target and #getTools(itemName) == 0 then
+                                    target = sentCount
+                                end
+                            end
+
                             task.wait()
                         end
                     end
 
                     if E.auto and E.autoGen == gen then
                         E.auto = false
-                        eaten = math.min(math.max(eaten, 0), target)
                         Util.notify(titles.section, reason or L("sn_eat_done", eaten), reason and "triangle-alert" or "check")
                         task.defer(function()
                             pcall(function()
@@ -6408,7 +6465,7 @@ do
         while isAlive() do
             for _, state in ipairs(gifters) do
                 pcall(function()
-                    state.Paragraph:SetDesc(tostring(countItem(state.itemName)))
+                    Util.setDesc(state.Paragraph, tostring(countItem(state.itemName)))
                 end)
             end
             task.wait(2)
@@ -6455,11 +6512,7 @@ do
 
     local connections = {}
 
-    local function setDesc(paragraph, text)
-        pcall(function()
-            paragraph:SetDesc(text)
-        end)
-    end
+    local setDesc = Util.setDesc
 
     local function toSet(options)
         local set = {}
@@ -7575,26 +7628,44 @@ do
     })
     Util.register("crystal_trade_toggle", TradeToggle)
 
+    local petsDirty = true
+    local function markDirty()
+        petsDirty = true
+    end
+
+    local watchedFolders = {
+        LocalPlayer:FindFirstChild("petsFolder"),
+        LocalPlayer:FindFirstChild("equippedPets"),
+        auraFolder(),
+    }
+    for _, folder in ipairs(watchedFolders) do
+        if folder then
+            table.insert(connections, folder.DescendantAdded:Connect(markDirty))
+            table.insert(connections, folder.DescendantRemoving:Connect(markDirty))
+        end
+    end
+    table.insert(connections, Players.PlayerAdded:Connect(markDirty))
+    table.insert(connections, Players.PlayerRemoving:Connect(markDirty))
+
     task.spawn(function()
         task.wait(1)
         pcall(refreshPetSell, true)
-
-        while isAlive() do
-            task.wait(1.5)
-            pcall(refreshPetSell, false)
-        end
-    end)
-
-    task.spawn(function()
-        task.wait(1.2)
         for _, picker in ipairs(Pickers) do
             pcall(picker.refresh, true)
         end
 
+        local lastForce = os.clock()
         while isAlive() do
             task.wait(1.5)
-            for _, picker in ipairs(Pickers) do
-                pcall(picker.refresh, false)
+
+            local now = os.clock()
+            if petsDirty or now - lastForce >= 8 then
+                petsDirty = false
+                lastForce = now
+                pcall(refreshPetSell, false)
+                for _, picker in ipairs(Pickers) do
+                    pcall(picker.refresh, false)
+                end
             end
         end
     end)
