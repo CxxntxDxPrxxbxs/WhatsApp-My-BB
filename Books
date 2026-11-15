@@ -164,9 +164,8 @@ local Strings = {
         alien_shop_section = "Alien Shop",
         alien_shop_select = "Select Alien Shop Items",
         alien_shop_toggle = "Auto Buy Alien Shop",
-        alien_shop_toggle_desc = "Keeps buying the selected items from the Alien Shop",
-        alien_shop_none = "Select at least one item first.",
-        alien_shop_unavailable = "The Alien Shop is not available.",
+        alien_shop_toggle_desc = "Keeps trying to buy the selected items until you turn it off, even while farming. Locked items are bought as soon as they unlock",
+        alien_shop_none = "No items selected yet. It will start buying as soon as you pick some.",
         bw_section = "Boss Webhook",
         bw_input = "Discord Webhook URL",
         bw_toggle = "Enable Boss Notifications",
@@ -281,10 +280,28 @@ local Strings = {
         ab_continue_farming = "Continue Farming after Boss Kill",
         ab_disabled = "Disabled",
         ab_current_boss_active = "Current boss active",
-        sn_boost_eater = "Boost Eater",
-        sn_eat_all_eggs = "Eat All Eggs",
-        sn_eat_all_boosts = "Eat all Boosts",
-        sn_expect_lag = "Expect lag",
+        sn_egg_eat_section = "Auto Eat Protein Eggs",
+        sn_egg_eat_amount = "Eggs to eat",
+        sn_egg_eat_auto = "Auto Eat Eggs",
+        sn_egg_eat_all = "Eat All Eggs",
+
+        sn_shake_eat_section = "Auto Eat Tropical Shake",
+        sn_shake_eat_amount = "Tropical Shakes to eat",
+        sn_shake_eat_auto = "Auto Eat Tropical Shakes",
+        sn_shake_eat_all = "Eat All Tropical Shakes",
+
+        sn_snack_section = "Auto Eat Snacks",
+        sn_snack_select = "Select Snacks",
+        sn_snack_auto = "Auto Eat Snacks",
+        sn_snack_auto_desc = "Keeps eating the selected snacks until you turn it off",
+        sn_snack_need_select = "Select at least one snack first.",
+
+        sn_eat_auto_desc = "Eats the typed amount automatically and then turns itself off",
+        sn_eat_all_desc = "Eats everything you have and keeps eating new ones until you turn it off",
+        sn_eat_need_amount = "Type an amount greater than 0 first.",
+        sn_eat_done = "Finished: %d eaten.",
+        sn_eat_none = "You have no more of that item.",
+        sn_eat_failed = "The game didn't accept it. Stopped.",
         sn_choose_player = "Choose Player",
         sn_amount = "Amount",
         sn_start_gifting = "Start Gifting",
@@ -629,9 +646,8 @@ local Strings = {
         alien_shop_section = "Tienda Alien",
         alien_shop_select = "Seleccionar items de la tienda Alien",
         alien_shop_toggle = "Auto comprar tienda Alien",
-        alien_shop_toggle_desc = "Compra sin parar los items elegidos de la tienda Alien",
-        alien_shop_none = "Elige al menos un item primero.",
-        alien_shop_unavailable = "La tienda Alien no está disponible.",
+        alien_shop_toggle_desc = "Sigue intentando comprar los items elegidos hasta que lo apagues, incluso mientras farmeas. Los items bloqueados se compran apenas se desbloqueen",
+        alien_shop_none = "Aún no hay items elegidos. Empezará a comprar apenas elijas alguno.",
         bw_section = "Webhook de bosses",
         bw_input = "URL del webhook de Discord",
         bw_toggle = "Activar notificaciones de bosses",
@@ -746,10 +762,28 @@ local Strings = {
         ab_continue_farming = "Seguir farmeando tras matar al boss",
         ab_disabled = "Desactivado",
         ab_current_boss_active = "Boss actual activo",
-        sn_boost_eater = "Comedor de boosts",
-        sn_eat_all_eggs = "Comer todos los huevos",
-        sn_eat_all_boosts = "Comer todos los boosts",
-        sn_expect_lag = "Puede causar lag",
+        sn_egg_eat_section = "Auto comer huevos de proteína",
+        sn_egg_eat_amount = "Huevos a comer",
+        sn_egg_eat_auto = "Auto comer huevos",
+        sn_egg_eat_all = "Comer todos los huevos",
+
+        sn_shake_eat_section = "Auto comer Tropical Shake",
+        sn_shake_eat_amount = "Tropical Shakes a comer",
+        sn_shake_eat_auto = "Auto comer Tropical Shakes",
+        sn_shake_eat_all = "Comer todos los Tropical Shakes",
+
+        sn_snack_section = "Auto comer snacks",
+        sn_snack_select = "Seleccionar snacks",
+        sn_snack_auto = "Auto comer snacks",
+        sn_snack_auto_desc = "Sigue comiendo los snacks elegidos hasta que lo apagues",
+        sn_snack_need_select = "Elige al menos un snack primero.",
+
+        sn_eat_auto_desc = "Come la cantidad escrita automáticamente y luego se apaga solo",
+        sn_eat_all_desc = "Come todo lo que tengas y sigue comiendo los nuevos hasta que lo apagues",
+        sn_eat_need_amount = "Escribe primero una cantidad mayor a 0.",
+        sn_eat_done = "Terminado: %d comidos.",
+        sn_eat_none = "Ya no tienes más de ese item.",
+        sn_eat_failed = "El juego no lo aceptó. Detenido.",
         sn_choose_player = "Elegir jugador",
         sn_amount = "Cantidad",
         sn_start_gifting = "Empezar a regalar",
@@ -3732,17 +3766,95 @@ do
         return model, hitbox
     end
 
+    local function readNumber(object)
+        if object:IsA("ValueBase") then
+            return tonumber(object.Value)
+        end
+        return nil
+    end
+
+    local function findHealthPair(model)
+        local current, maximum
+
+        for _, root in ipairs({ model, workspace }) do
+            for _, name in ipairs({ "alienBossHealth", "AlienBossHealth", "BossHealth", "Health" }) do
+                local obj = root:FindFirstChild(name, true)
+                local value = obj and readNumber(obj)
+                if value then
+                    current = value
+                    break
+                end
+            end
+            for _, name in ipairs({ "alienBossMaxHealth", "AlienBossMaxHealth", "BossMaxHealth", "MaxHealth" }) do
+                local obj = root:FindFirstChild(name, true)
+                local value = obj and readNumber(obj)
+                if value then
+                    maximum = value
+                    break
+                end
+            end
+            if current then
+                break
+            end
+        end
+
+        if not current then
+            for _, holder in ipairs({ model, workspace }) do
+                for _, name in ipairs({ "alienBossHealth", "AlienBossHealth", "AlienHealth", "BossHealth", "Health" }) do
+                    local value = tonumber(holder:GetAttribute(name))
+                    if value then
+                        current = value
+                        break
+                    end
+                end
+                for _, name in ipairs({ "alienBossMaxHealth", "AlienBossMaxHealth", "AlienMaxHealth", "BossMaxHealth", "MaxHealth" }) do
+                    local value = tonumber(holder:GetAttribute(name))
+                    if value then
+                        maximum = value
+                        break
+                    end
+                end
+                if current then
+                    break
+                end
+            end
+        end
+
+        if not current then
+            local humanoid = model:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                current, maximum = humanoid.Health, humanoid.MaxHealth
+            end
+        end
+
+        if not current then
+            for _, object in ipairs(model:GetDescendants()) do
+                local name = string.lower(object.Name)
+                if string.find(name, "health", 1, true) then
+                    local value = readNumber(object)
+                    if value then
+                        if string.find(name, "max", 1, true) then
+                            maximum = maximum or value
+                        else
+                            current = current or value
+                        end
+                    end
+                end
+            end
+        end
+
+        return current, maximum
+    end
+
     local function alienHealth(model)
-        local healthValue = model:FindFirstChild("alienBossHealth", true)
-        local current = healthValue and healthValue:IsA("ValueBase") and tonumber(healthValue.Value)
-        if current then
-            return shortNumber(current)
+        local current, maximum = findHealthPair(model)
+        if not current then
+            return "N/A"
         end
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            return shortNumber(humanoid.Health) .. " / " .. shortNumber(humanoid.MaxHealth)
+        if maximum and maximum > 0 then
+            return shortNumber(current) .. " / " .. shortNumber(maximum)
         end
-        return "N/A"
+        return shortNumber(current)
     end
 
     local function pressOpenButtons()
@@ -3786,7 +3898,7 @@ do
         if not chest then
             for _, object in ipairs(workspace:GetDescendants()) do
                 if (object:IsA("Model") or object:IsA("BasePart"))
-                    and string.find(string.lower(object.Name), "alienchest", 1, true) then
+                    and string.find((string.lower(object.Name):gsub("%s+", "")), "alienchest", 1, true) then
                     chest = object
                     break
                 end
@@ -3896,22 +4008,35 @@ do
     end
 
     local function runShop(generation)
-        while Shop.running and Shop.generation == generation and isAlive() do
+        local function active()
+            return Shop.running and Shop.generation == generation and isAlive()
+        end
+
+        while active() do
             local remote = getShopRemote()
 
             if remote then
+                local items = {}
                 for _, item in pairs(Shop.selected) do
-                    if not (Shop.running and Shop.generation == generation and isAlive()) then
+                    table.insert(items, item)
+                end
+
+                for _, item in ipairs(items) do
+                    if not active() then
                         break
                     end
-                    pcall(function()
-                        remote:InvokeServer(item.Key)
+
+                    task.spawn(function()
+                        pcall(function()
+                            remote:InvokeServer(item.Key)
+                        end)
                     end)
-                    task.wait(0.5)
+
+                    task.wait(0.25)
                 end
             end
 
-            task.wait(1)
+            task.wait(0.5)
         end
     end
 
@@ -4013,22 +4138,8 @@ do
                 return
             end
 
-            local reason
             if next(Shop.selected) == nil then
-                reason = L("alien_shop_none")
-            elseif not getShopRemote() then
-                reason = L("alien_shop_unavailable")
-            end
-
-            if reason then
-                Shop.running = false
-                Util.notify(L("alien_shop_section"), reason, "triangle-alert")
-                task.defer(function()
-                    pcall(function()
-                        ShopToggle:Set(false)
-                    end)
-                end)
-                return
+                Util.notify(L("alien_shop_section"), L("alien_shop_none"), "info")
             end
 
             task.spawn(runShop, generation)
@@ -5877,11 +5988,9 @@ do
 
     local connections = {}
     local gifters = {}
-    local eatEggs = false
-    local eatBoosts = false
+    local eaters = {}
 
-    local boostItems = {
-        "Tropical Shake",
+    local snackItems = {
         "ULTRA Shake",
         "Energy Shake",
         "Protein Bar",
@@ -5890,18 +5999,25 @@ do
         "Energy Bar",
     }
 
-    local function findItem(name)
-        local character = LocalPlayer.Character
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        return (character and character:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name))
-    end
-
     local function countItem(name)
         local total = 0
         local backpack = LocalPlayer:FindFirstChild("Backpack")
         if backpack then
             for _, item in ipairs(backpack:GetChildren()) do
                 if item.Name == name then
+                    total = total + 1
+                end
+            end
+        end
+        return total
+    end
+
+    local function countAll(name)
+        local total = countItem(name)
+        local character = LocalPlayer.Character
+        if character then
+            for _, item in ipairs(character:GetChildren()) do
+                if item:IsA("Tool") and item.Name == name then
                     total = total + 1
                 end
             end
@@ -5920,63 +6036,248 @@ do
         return table.concat(parts)
     end
 
-    Snacks:Section({ Title = L("sn_boost_eater") })
-
-    local EatEggsToggle = Snacks:Toggle({
-        Title = L("sn_eat_all_eggs"),
-        Value = false,
-        Callback = function(state)
-            eatEggs = state
-        end,
-    })
-    Util.register("snacks_eat_eggs", EatEggsToggle)
-
-    local EatBoostsToggle = Snacks:Toggle({
-        Title = L("sn_eat_all_boosts"),
-        Desc = L("sn_expect_lag"),
-        Value = false,
-        Callback = function(state)
-            eatBoosts = state
-        end,
-    })
-    Util.register("snacks_eat_boosts", EatBoostsToggle)
-
-    task.spawn(function()
-        while isAlive() do
-            if eatEggs then
-                local egg = findItem("Protein Egg")
-                local event = LocalPlayer:FindFirstChild("muscleEvent")
-                if egg and event then
-                    pcall(function()
-                        event:FireServer("proteinEgg", egg)
-                    end)
-                end
-                task.wait(0.25)
-            else
-                task.wait(1)
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while isAlive() do
-            if eatBoosts then
-                local event = LocalPlayer:FindFirstChild("muscleEvent")
-                for _, itemName in ipairs(boostItems) do
-                    local tool = findItem(itemName)
-                    if tool and event then
-                        local eventName = boostEventName(itemName)
-                        for _ = 1, 10 do
-                            pcall(function()
-                                event:FireServer(eventName, tool)
-                            end)
-                        end
+    local function getTools(name)
+        local list = {}
+        for _, container in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
+            if container then
+                for _, item in ipairs(container:GetChildren()) do
+                    if item:IsA("Tool") and item.Name == name then
+                        table.insert(list, item)
                     end
                 end
             end
-            task.wait(0.1)
         end
-    end)
+        return list
+    end
+
+    local firedAt = setmetatable({}, { __mode = "k" })
+
+    local function burstEat(itemName, eventName, limit)
+        local event = LocalPlayer:FindFirstChild("muscleEvent")
+        if not event then
+            return 0
+        end
+
+        local fired = 0
+        local now = os.clock()
+        for _, tool in ipairs(getTools(itemName)) do
+            if limit and fired >= limit then
+                break
+            end
+            if now - (firedAt[tool] or 0) > 0.3 then
+                firedAt[tool] = now
+                fired = fired + 1
+                pcall(event.FireServer, event, eventName, tool)
+            end
+        end
+        return fired
+    end
+
+    local function makeEater(titles, itemName, eventName, flagPrefix)
+        Snacks:Section({ Title = titles.section })
+
+        local E = {
+            amount = 0,
+            auto = false,
+            all = false,
+            autoGen = 0,
+            allGen = 0,
+        }
+
+        local AutoToggle, AllToggle
+
+        Snacks:Input({
+            Title = titles.amount,
+            Placeholder = "0",
+            Value = "",
+            Callback = function(text)
+                local n = tonumber(text)
+                if n then
+                    E.amount = math.max(0, math.floor(n))
+                end
+            end,
+        })
+
+        AutoToggle = Snacks:Toggle({
+            Title = titles.auto,
+            Desc = L("sn_eat_auto_desc"),
+            Value = false,
+            Callback = function(state)
+                E.auto = state
+                E.autoGen = E.autoGen + 1
+                local gen = E.autoGen
+
+                if not state then
+                    return
+                end
+
+                if E.amount <= 0 then
+                    E.auto = false
+                    Util.notify(titles.section, L("sn_eat_need_amount"), "triangle-alert")
+                    task.defer(function()
+                        pcall(function()
+                            AutoToggle:Set(false)
+                        end)
+                    end)
+                    return
+                end
+
+                task.spawn(function()
+                    local startCount = countAll(itemName)
+                    local target = math.min(E.amount, startCount)
+                    local eaten = 0
+                    local reason = nil
+
+                    if target <= 0 then
+                        reason = L("sn_eat_none")
+                    else
+                        local lastEaten = 0
+                        local lastProgress = os.clock()
+
+                        while E.auto and isAlive() and E.autoGen == gen do
+                            eaten = startCount - countAll(itemName)
+                            if eaten >= target then
+                                break
+                            end
+
+                            if eaten > lastEaten then
+                                lastEaten = eaten
+                                lastProgress = os.clock()
+                            elseif os.clock() - lastProgress > 4 then
+                                reason = L("sn_eat_failed")
+                                break
+                            end
+
+                            burstEat(itemName, eventName, target - eaten)
+                            task.wait()
+                        end
+                    end
+
+                    if E.auto and E.autoGen == gen then
+                        E.auto = false
+                        eaten = math.min(math.max(eaten, 0), target)
+                        Util.notify(titles.section, reason or L("sn_eat_done", eaten), reason and "triangle-alert" or "check")
+                        task.defer(function()
+                            pcall(function()
+                                AutoToggle:Set(false)
+                            end)
+                        end)
+                    end
+                end)
+            end,
+        })
+        Util.register(flagPrefix .. "_auto", AutoToggle)
+
+        AllToggle = Snacks:Toggle({
+            Title = titles.all,
+            Desc = L("sn_eat_all_desc"),
+            Value = false,
+            Callback = function(state)
+                E.all = state
+                E.allGen = E.allGen + 1
+                local gen = E.allGen
+
+                if not state then
+                    return
+                end
+
+                task.spawn(function()
+                    while E.all and isAlive() and E.allGen == gen do
+                        if burstEat(itemName, eventName) > 0 then
+                            task.wait()
+                        else
+                            task.wait(0.3)
+                        end
+                    end
+                end)
+            end,
+        })
+        Util.register(flagPrefix .. "_all", AllToggle)
+
+        table.insert(eaters, E)
+    end
+
+    makeEater({
+        section = L("sn_egg_eat_section"),
+        amount = L("sn_egg_eat_amount"),
+        auto = L("sn_egg_eat_auto"),
+        all = L("sn_egg_eat_all"),
+    }, "Protein Egg", "proteinEgg", "snacks_egg")
+
+    makeEater({
+        section = L("sn_shake_eat_section"),
+        amount = L("sn_shake_eat_amount"),
+        auto = L("sn_shake_eat_auto"),
+        all = L("sn_shake_eat_all"),
+    }, "Tropical Shake", boostEventName("Tropical Shake"), "snacks_shake")
+
+    Snacks:Section({ Title = L("sn_snack_section") })
+
+    local Snack = { selected = {}, auto = false, gen = 0 }
+
+    local SnackDropdown = Snacks:Dropdown({
+        Title = L("sn_snack_select"),
+        Values = snackItems,
+        Value = {},
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        Callback = function(options)
+            Snack.selected = {}
+            if type(options) == "table" then
+                for _, name in pairs(options) do
+                    Snack.selected[tostring(name)] = true
+                end
+            elseif type(options) == "string" and options ~= "" then
+                Snack.selected[options] = true
+            end
+        end,
+    })
+    Util.register("snacks_snack_list", SnackDropdown)
+
+    local SnackToggle
+    SnackToggle = Snacks:Toggle({
+        Title = L("sn_snack_auto"),
+        Desc = L("sn_snack_auto_desc"),
+        Value = false,
+        Callback = function(state)
+            Snack.auto = state
+            Snack.gen = Snack.gen + 1
+            local gen = Snack.gen
+
+            if not state then
+                return
+            end
+
+            if next(Snack.selected) == nil then
+                Snack.auto = false
+                Util.notify(L("sn_snack_section"), L("sn_snack_need_select"), "triangle-alert")
+                task.defer(function()
+                    pcall(function()
+                        SnackToggle:Set(false)
+                    end)
+                end)
+                return
+            end
+
+            task.spawn(function()
+                while Snack.auto and isAlive() and Snack.gen == gen do
+                    local fired = 0
+                    for _, name in ipairs(snackItems) do
+                        if Snack.selected[name] then
+                            fired = fired + burstEat(name, boostEventName(name))
+                        end
+                    end
+                    if fired > 0 then
+                        task.wait()
+                    else
+                        task.wait(0.3)
+                    end
+                end
+            end)
+        end,
+    })
+    Util.register("snacks_snack_auto", SnackToggle)
 
     local function buildGifter(sectionTitle, itemName, countTitle)
         Snacks:Section({ Title = sectionTitle })
@@ -6113,8 +6414,14 @@ do
             task.wait(2)
         end
 
-        eatEggs = false
-        eatBoosts = false
+        for _, E in ipairs(eaters) do
+            E.auto = false
+            E.all = false
+            E.autoGen = E.autoGen + 1
+            E.allGen = E.allGen + 1
+        end
+        Snack.auto = false
+        Snack.gen = Snack.gen + 1
         for _, connection in ipairs(connections) do
             pcall(function()
                 connection:Disconnect()
