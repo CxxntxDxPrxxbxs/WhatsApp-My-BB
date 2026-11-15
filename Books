@@ -154,10 +154,19 @@ local Strings = {
         boss_none = "None",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "The boss event is not available right now.",
-        alien_section = "Alien Section",
+        alien_section = "Alien System",
         alien_status_title = "Alien Boss Status",
-        alien_autoboss = "Auto Alien Boss",
+        alien_autoboss = "Auto Alien Boss & Chest",
+        alien_autoboss_desc = "Fights the Alien Boss and claims its chest when it dies",
         alien_waiting = "Waiting for Alien Boss",
+        alien_attacking = "Attacking",
+        alien_claiming = "Boss dead! Claiming chest...",
+        alien_shop_section = "Alien Shop",
+        alien_shop_select = "Select Alien Shop Items",
+        alien_shop_toggle = "Auto Buy Alien Shop",
+        alien_shop_toggle_desc = "Keeps buying the selected items from the Alien Shop",
+        alien_shop_none = "Select at least one item first.",
+        alien_shop_unavailable = "The Alien Shop is not available.",
         bw_section = "Boss Webhook",
         bw_input = "Discord Webhook URL",
         bw_toggle = "Enable Boss Notifications",
@@ -610,10 +619,19 @@ local Strings = {
         boss_none = "Ninguno",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "El evento de boss no está disponible ahora.",
-        alien_section = "Sección Alien",
+        alien_section = "Sistema Alien",
         alien_status_title = "Estado del Alien Boss",
-        alien_autoboss = "Auto Alien Boss",
+        alien_autoboss = "Auto Alien Boss y cofre",
+        alien_autoboss_desc = "Pelea al Alien Boss y reclama su cofre cuando muere",
         alien_waiting = "Esperando Alien Boss",
+        alien_attacking = "Atacando",
+        alien_claiming = "¡Boss muerto! Reclamando cofre...",
+        alien_shop_section = "Tienda Alien",
+        alien_shop_select = "Seleccionar items de la tienda Alien",
+        alien_shop_toggle = "Auto comprar tienda Alien",
+        alien_shop_toggle_desc = "Compra sin parar los items elegidos de la tienda Alien",
+        alien_shop_none = "Elige al menos un item primero.",
+        alien_shop_unavailable = "La tienda Alien no está disponible.",
         bw_section = "Webhook de bosses",
         bw_input = "URL del webhook de Discord",
         bw_toggle = "Activar notificaciones de bosses",
@@ -652,10 +670,10 @@ local Strings = {
         pk_rebirth_title = "Fast Rebirth",
         pk_rebirths = "Rebirths",
         pk_rebirths_gained = "Rebirths ganados",
-        pk_status = "Estatus",
+        pk_status = "Estado",
         pk_active = "Activo",
         pk_inactive = "Inactivo",
-        pk_rb_calc = "Calculadora de renacimientos",
+        pk_rb_calc = "Calculadora de rebirths",
         pk_fast_rebirths = "Fast Rebirths",
         pk_zero_lift = "Zero Degrees Gym Lift",
 
@@ -2801,8 +2819,8 @@ do
     }
 
     local NUMBER_UNITS = {
-        { 1e18, "Qi" },
-        { 1e15, "Qa" },
+        { 1e18, "QI" },
+        { 1e15, "QA" },
         { 1e12, "T" },
         { 1e9, "B" },
         { 1e6, "M" },
@@ -3620,6 +3638,404 @@ do
         end
     end)
 
+    Farm:Section({ Title = L("alien_section") })
+
+    local ALIEN_SHOP_ITEMS = {
+        { Name = "Lunar Slug", Key = "LunarSlug", Price = 2400 },
+        { Name = "UFO Axolotl", Key = "UFOAxolotl", Price = 4800 },
+        { Name = "Alien Serum", Key = "AlienSerum", Price = 3000 },
+        { Name = "Plasma Dumbbell", Key = "PlasmaDumbbell", Price = 200 },
+        { Name = "Alien Bar", Key = "AlienBar", Price = 250 },
+        { Name = "Alien Pull-Up Bar", Key = "AlienPullUpBar", Price = 300 },
+        { Name = "Alien Treadmill", Key = "AlienTreadmill", Price = 350 },
+    }
+
+    local Alien = {
+        running = false,
+        generation = 0,
+        status = L("alien_waiting"),
+        punchInterval = Main.punchInterval,
+        lastPunch = 0,
+        attackSequence = nil,
+        evadeUntil = 0,
+        evadeDistance = 230,
+        punchBehind = 45,
+        stompThreshold = 0.35,
+        dodgeStomps = false,
+        returnCFrame = nil,
+    }
+
+    local Shop = {
+        running = false,
+        generation = 0,
+        selected = {},
+        byLabel = {},
+    }
+
+    local function ensureAlienHitbox(model)
+        local hitbox = model:FindFirstChild("BossDamageHitbox", true)
+        if hitbox and hitbox:IsA("BasePart") then
+            return hitbox
+        end
+        local part = model:FindFirstChild("HumanoidRootPart")
+            or model.PrimaryPart
+            or model:FindFirstChildWhichIsA("BasePart", true)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+        return nil
+    end
+
+    local function isAlienDead(model)
+        local healthValue = model:FindFirstChild("alienBossHealth", true)
+        if healthValue and healthValue:IsA("ValueBase") and healthValue.Value <= 0 then
+            return true
+        end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        return humanoid ~= nil and humanoid.Health <= 0
+    end
+
+    local function findAlienBoss()
+        local model = workspace:FindFirstChild("Alien Boss")
+
+        if not (model and model:IsA("Model")) then
+            model = nil
+
+            local healthValue = workspace:FindFirstChild("alienBossHealth", true)
+            if healthValue and healthValue:IsA("ValueBase") and healthValue.Value > 0 then
+                model = healthValue:FindFirstAncestorOfClass("Model")
+            end
+
+            if not model then
+                for _, candidate in ipairs(workspace:GetDescendants()) do
+                    if candidate:IsA("Model") then
+                        local name = string.lower(candidate.Name)
+                        if (string.find(name, "alien boss", 1, true) or string.find(name, "alienboss", 1, true))
+                            and not string.find(name, "arena", 1, true) then
+                            model = candidate
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        if not model or isAlienDead(model) then
+            return nil
+        end
+
+        local hitbox = ensureAlienHitbox(model)
+        if not hitbox then
+            return nil
+        end
+
+        return model, hitbox
+    end
+
+    local function alienHealth(model)
+        local healthValue = model:FindFirstChild("alienBossHealth", true)
+        local current = healthValue and healthValue:IsA("ValueBase") and tonumber(healthValue.Value)
+        if current then
+            return shortNumber(current)
+        end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            return shortNumber(humanoid.Health) .. " / " .. shortNumber(humanoid.MaxHealth)
+        end
+        return "N/A"
+    end
+
+    local function pressOpenButtons()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return
+        end
+
+        for _, button in ipairs(playerGui:GetDescendants()) do
+            if button:IsA("TextButton") and button.Visible
+                and string.find(string.lower(button.Text), "open", 1, true) then
+                if getconnections then
+                    for _, conn in ipairs(getconnections(button.MouseButton1Click)) do
+                        pcall(function()
+                            conn:Fire()
+                        end)
+                    end
+                    for _, conn in ipairs(getconnections(button.Activated)) do
+                        pcall(function()
+                            conn:Fire()
+                        end)
+                    end
+                else
+                    local pos, size = button.AbsolutePosition, button.AbsoluteSize
+                    pcall(function()
+                        VirtualInputManager:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, true, game, 0)
+                        VirtualInputManager:SendMouseButtonEvent(pos.X + size.X / 2, pos.Y + size.Y / 2, 0, false, game, 0)
+                    end)
+                end
+            end
+        end
+    end
+
+    local function claimAlienChest(generation)
+        local root = getRoot()
+        if not root then
+            return
+        end
+
+        local chest = workspace:FindFirstChild("Alien Chest", true)
+        if not chest then
+            for _, object in ipairs(workspace:GetDescendants()) do
+                if (object:IsA("Model") or object:IsA("BasePart"))
+                    and string.find(string.lower(object.Name), "alienchest", 1, true) then
+                    chest = object
+                    break
+                end
+            end
+        end
+
+        if chest then
+            local part = chest:IsA("BasePart") and chest or chest:FindFirstChildWhichIsA("BasePart", true)
+
+            if part then
+                root.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 4))
+                task.wait(0.2)
+
+                if not alive(Alien, generation) then
+                    return
+                end
+
+                local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local click = chest:FindFirstChildWhichIsA("ClickDetector", true)
+
+                if prompt then
+                    local old = prompt.MaxActivationDistance
+                    prompt.MaxActivationDistance = 999999
+                    pcall(fireproximityprompt, prompt)
+                    prompt.MaxActivationDistance = old
+                elseif click and fireclickdetector then
+                    pcall(fireclickdetector, click)
+                elseif firetouchinterest then
+                    pcall(function()
+                        firetouchinterest(part, root, 0)
+                        firetouchinterest(part, root, 1)
+                    end)
+                end
+            end
+        end
+
+        task.wait(0.5)
+        if alive(Alien, generation) then
+            pressOpenButtons()
+        end
+    end
+
+    local function runAlien(generation)
+        local wasFighting = false
+
+        while alive(Alien, generation) do
+            local busy = false
+
+            pcall(function()
+                local model, hitbox = findAlienBoss()
+
+                if model then
+                    busy = true
+
+                    if not wasFighting then
+                        wasFighting = true
+                        Alien.attackSequence = nil
+                        Alien.evadeUntil = 0
+                        Alien.dodgeStomps = false
+                        captureReturn(Alien)
+                        pauseTraining()
+                    end
+
+                    local humanoid = getHum()
+                    if humanoid and humanoid.Health > 0 and getRoot() then
+                        Alien.status = L("alien_attacking") .. ": " .. model.Name
+                        attack(Alien, model, hitbox)
+                    else
+                        Alien.status = L("ab_waiting_for_respawn")
+                    end
+
+                elseif wasFighting then
+                    wasFighting = false
+                    Alien.status = L("alien_claiming")
+
+                    task.wait(1)
+                    claimAlienChest(generation)
+                    task.wait(2)
+
+                    if not alive(Alien, generation) then
+                        return
+                    end
+
+                    returnToFarm(Alien)
+                    if Main.continueTraining then
+                        resumeTraining()
+                    end
+                    Alien.status = L("alien_waiting")
+
+                else
+                    Alien.status = L("alien_waiting")
+                end
+            end)
+
+            task.wait(busy and 0.03 or 0.25)
+        end
+    end
+
+    local function getShopRemote()
+        local packages = ReplicatedStorage:FindFirstChild("packages")
+        local net = packages and packages:FindFirstChild("Net")
+        local remote = net and net:FindFirstChild("RF/AlienShop")
+        if remote and remote:IsA("RemoteFunction") then
+            return remote
+        end
+        return nil
+    end
+
+    local function runShop(generation)
+        while Shop.running and Shop.generation == generation and isAlive() do
+            local remote = getShopRemote()
+
+            if remote then
+                for _, item in pairs(Shop.selected) do
+                    if not (Shop.running and Shop.generation == generation and isAlive()) then
+                        break
+                    end
+                    pcall(function()
+                        remote:InvokeServer(item.Key)
+                    end)
+                    task.wait(0.5)
+                end
+            end
+
+            task.wait(1)
+        end
+    end
+
+    local AlienStatus = Farm:Paragraph({
+        Title = L("alien_status_title"),
+        Desc = L("home_loading"),
+    })
+
+    local AlienToggle
+    AlienToggle = Farm:Toggle({
+        Title = L("alien_autoboss"),
+        Desc = L("alien_autoboss_desc"),
+        Value = false,
+        Callback = function(state)
+            Alien.generation = Alien.generation + 1
+            local generation = Alien.generation
+            Alien.running = state
+
+            if not state then
+                returnToFarm(Alien)
+                resumeTraining()
+                Alien.status = L("ab_disabled")
+                return
+            end
+
+            Alien.status = L("alien_waiting")
+            task.spawn(runAlien, generation)
+        end,
+    })
+    Util.register("alien_boss", AlienToggle)
+
+    task.spawn(function()
+        while isAlive() do
+            pcall(function()
+                local model = findAlienBoss()
+                local bossText = L("boss_none")
+                local healthText = "N/A"
+
+                if model then
+                    bossText = model.Name
+                    healthText = alienHealth(model)
+                end
+
+                AlienStatus:SetDesc(table.concat({
+                    L("boss_status") .. ": " .. Alien.status,
+                    L("boss_boss") .. ": " .. bossText,
+                    L("boss_health") .. ": " .. healthText,
+                }, "\n"))
+            end)
+
+            task.wait(0.5)
+        end
+    end)
+
+    local shopLabels = {}
+    for _, item in ipairs(ALIEN_SHOP_ITEMS) do
+        local label = item.Name .. " (" .. item.Price .. ")"
+        Shop.byLabel[label] = item
+        table.insert(shopLabels, label)
+    end
+
+    local ShopDropdown = Farm:Dropdown({
+        Title = L("alien_shop_select"),
+        Values = shopLabels,
+        Value = {},
+        Multi = true,
+        AllowNone = true,
+        SearchBarEnabled = true,
+        Callback = function(options)
+            Shop.selected = {}
+            if type(options) == "table" then
+                for _, label in pairs(options) do
+                    local item = Shop.byLabel[tostring(label)]
+                    if item then
+                        Shop.selected[item.Name] = item
+                    end
+                end
+            elseif type(options) == "string" then
+                local item = Shop.byLabel[options]
+                if item then
+                    Shop.selected[item.Name] = item
+                end
+            end
+        end,
+    })
+    Util.register("alien_shop_items", ShopDropdown)
+
+    local ShopToggle
+    ShopToggle = Farm:Toggle({
+        Title = L("alien_shop_toggle"),
+        Desc = L("alien_shop_toggle_desc"),
+        Value = false,
+        Callback = function(state)
+            Shop.running = state
+            Shop.generation = Shop.generation + 1
+            local generation = Shop.generation
+
+            if not state then
+                return
+            end
+
+            local reason
+            if next(Shop.selected) == nil then
+                reason = L("alien_shop_none")
+            elseif not getShopRemote() then
+                reason = L("alien_shop_unavailable")
+            end
+
+            if reason then
+                Shop.running = false
+                Util.notify(L("alien_shop_section"), reason, "triangle-alert")
+                task.defer(function()
+                    pcall(function()
+                        ShopToggle:Set(false)
+                    end)
+                end)
+                return
+            end
+
+            task.spawn(runShop, generation)
+        end,
+    })
+    Util.register("alien_shop_autobuy", ShopToggle)
+
     Farm:Section({ Title = L("bw_section") })
 
     local WebhookInput = Farm:Input({
@@ -3676,8 +4092,13 @@ do
         end
         Main.running = false
         Main.generation = Main.generation + 1
+        Alien.running = false
+        Alien.generation = Alien.generation + 1
+        Shop.running = false
+        Shop.generation = Shop.generation + 1
         pcall(function()
             returnToFarm(Main)
+            returnToFarm(Alien)
         end)
         for _, connection in ipairs(connections) do
             pcall(function()
@@ -3694,15 +4115,8 @@ do
     local REBIRTH_TOLERANCE = 0.75
     local MAX_EQUIPPED_PETS = 12
     local PING_LIMIT = 3000
+    local DEFAULT_REPS_PER_TICK = 40
     local RATE_WINDOW = 10
-
-    local MIN_REPS = 60
-    local DEFAULT_REPS_PER_TICK = 60
-    local TURBO_MULTIPLIER = 2.5
-    local PING_SOFT = 450
-    local PING_RECOVER = 300
-    local PING_SAMPLE = 0.25
-    local MIN_SCALE = 0.3
 
     local ZERO_DEGREES_CF = CFrame.new(-5096.62, 47.51, 11097.66)
     local ZERO_LIFT_CF = CFrame.new(-5372.84, 47.50, 10323.82)
@@ -3821,8 +4235,6 @@ do
     end
 
     local repsPerTick = DEFAULT_REPS_PER_TICK
-    local turboEnabled = false
-    local currentReps = 0
     local fastRepEnabled = false
     local fastRepRunning = false
 
@@ -3843,82 +4255,31 @@ do
         Desc = "",
     })
 
-    local RepsInput
-    RepsInput = Packs:Input({
+    local RepsInput = Packs:Input({
         Title = L("pk_reps_speed"),
         Placeholder = tostring(DEFAULT_REPS_PER_TICK),
         Value = "",
         Callback = function(text)
             local n = tonumber(text)
-            if not n then
-                return
-            end
-            n = math.max(MIN_REPS, math.floor(n))
-            repsPerTick = n
-            if n ~= tonumber(text) then
-                pcall(function()
-                    RepsInput:Set(tostring(n))
-                end)
+            if n and n > 0 then
+                repsPerTick = math.floor(n)
             end
         end,
     })
     Util.register("reps_speed", RepsInput)
 
-    local TurboToggle = Packs:Toggle({
-        Title = "Turbo",
-        Desc = "x" .. TURBO_MULTIPLIER .. " reps. Se ajusta solo segun el ping.",
-        Value = false,
-        Callback = function(state)
-            turboEnabled = state
-        end,
-    })
-    Util.register("reps_turbo", TurboToggle)
-
     local function fastRepLoop()
-        local event = nil
-        local ping = 0
-        local lastSample = 0
-        local scale = 1
-
         while fastRepEnabled and isAlive() do
-            local now = os.clock()
-
-            if now - lastSample >= PING_SAMPLE then
-                lastSample = now
-                ping = Util.getPing()
-
-                if ping > PING_SOFT then
-                    scale = math.max(MIN_SCALE, scale * 0.85)
-                elseif ping < PING_RECOVER then
-                    scale = math.min(1, scale + 0.1)
-                end
-            end
-
-            if ping < PING_LIMIT then
-                if not event or not event.Parent then
-                    event = LocalPlayer:FindFirstChild("muscleEvent")
-                end
-
-                if event then
-                    local count = repsPerTick * scale
-                    if turboEnabled then
-                        count = count * TURBO_MULTIPLIER
-                    end
-                    count = math.max(1, math.floor(count))
-                    currentReps = count
-
-                    for _ = 1, count do
-                        event:FireServer("rep")
+            if Util.getPing() < PING_LIMIT then
+                local muscleEvent = LocalPlayer:FindFirstChild("muscleEvent")
+                if muscleEvent then
+                    for _ = 1, repsPerTick do
+                        muscleEvent:FireServer("rep")
                     end
                 end
-            else
-                currentReps = 0
             end
-
             task.wait()
         end
-
-        currentReps = 0
         fastRepRunning = false
     end
 
@@ -3965,8 +4326,7 @@ do
         Title = L("pk_time_title"),
         Desc = L("pk_time") .. ": 0d 0h 0m 0s\n"
             .. L("pk_fastreps") .. ": " .. L("pk_off") .. "\n"
-            .. L("pk_ping") .. ": 0 ms\n"
-            .. "Reps/tick: 0",
+            .. L("pk_ping") .. ": 0 ms",
     })
 
     local StrengthParagraph = Packs:Paragraph({
@@ -4011,7 +4371,6 @@ do
                 L("pk_time") .. ": " .. formatDuration(elapsed),
                 L("pk_fastreps") .. ": " .. statusText,
                 L("pk_ping") .. ": " .. ping .. " ms",
-                "Reps/tick: " .. currentReps,
             }, "\n"))
 
             setDesc(StrengthParagraph, strengthRates)
@@ -9617,7 +9976,7 @@ do
             ["Legend Gym"] = CFrame.new(4111.91748, 1020.46674, -3799.97217),
             ["Muscle King Gym"] = CFrame.new(-8590.06152, 46.0167427, -6043.34717),
             ["Jungle Gym"] = CFrame.new(-8173, 64, 1898),
-            ["Industrial Gym"] = Cframe.new(-5012.56, 117.92, 4473.92),
+            ["Industrial Gym"] = CFrame.new(-5012.56, 117.92, 4473.92),
         },
         ["Squat"] = {
             ["Starter Island"] = CFrame.new(-48.8711243, 3.31417918, -11.8831778),
@@ -9628,7 +9987,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8352, 34, 2878),
-            ["Industrial Gym"] = Cframe.new(-5219.50, 61.06, 5419.80),
+            ["Industrial Gym"] = CFrame.new(-5219.50, 61.06, 5419.80),
         },
         ["Deadlift"] = {
             ["Starter Island"] = CFrame.new(-48.8711243, 3.31417918, -11.8831778),
@@ -9648,7 +10007,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8666, 34, 2070),
-            ["Industrial Gym"] = Cframe.new(-5491.40, 61.06, 4644.60),
+            ["Industrial Gym"] = CFrame.new(-5491.40, 61.06, 4644.60),
         },
         ["Boulder"] = {
             ["Starter Island"] = CFrame.new(-33.3047485, 3.31417918, -11.8831778),
@@ -9659,7 +10018,7 @@ do
             ["Legend Gym"] = CFrame.new(4304.99023, 987.829956, -4124.2334),
             ["Muscle King Gym"] = CFrame.new(-8940.12402, 13.1642084, -5699.13477),
             ["Jungle Gym"] = CFrame.new(-8621, 34, 2684),
-            ["Industrial Gym"] = Cframe.new(-5450.07, 61.06, 5237.17),
+            ["Industrial Gym"] = CFrame.new(-5450.07, 61.06, 5237.17),
         },
     }
 
