@@ -161,6 +161,10 @@ local Strings = {
         boss_none = "None",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "The boss event is not available right now.",
+        ab_chest_missing = "Boss chest not found. Returning to farm.",
+        ab_chest_failed = "Could not claim the boss chest.",
+        alien_chest_missing = "Alien chest not found.",
+        alien_chest_failed = "Could not claim the Alien chest.",
         alien_section = "Alien System",
         alien_status_title = "Alien Boss Status",
         alien_autoboss = "Auto Alien Boss & Chest",
@@ -347,9 +351,9 @@ local Strings = {
         cr_psell_sold = "Sold: %d",
         cr_psell_select_first = "Select at least one pet first.",
         cr_psell_failed = "The game didn't accept the sale. Auto sell stopped.",
+        cr_sellall_toggle = "Sell All Pets & Auras",
+        cr_sellall_toggle_desc = "Sells every unlocked pet and aura in your inventory and every new one you get while it's on. Locked and equipped items are never sold",
         cr_psell_refresh = "Refresh pets",
-        cr_sellall_toggle = "Sell All Pets",
-        cr_sellall_toggle_desc = "Sells every unlocked pet in your inventory and every new pet you get while it's on. Locked and equipped pets are never sold",
         cr_evo_section = "Auto Evolve",
         cr_evo_info_title = "Auto Evolve Status",
         cr_evo_select = "Select Pets to Evolve",
@@ -651,6 +655,10 @@ local Strings = {
         boss_none = "Ninguno",
         boss_autoboss = "Auto Boss",
         boss_unavailable = "El evento de boss no está disponible ahora.",
+        ab_chest_missing = "No se encontró el cofre del boss. Volviendo al farmeo.",
+        ab_chest_failed = "No se pudo reclamar el cofre del boss.",
+        alien_chest_missing = "No se encontró el cofre del Alien.",
+        alien_chest_failed = "No se pudo reclamar el cofre del Alien.",
         alien_section = "Sistema Alien",
         alien_status_title = "Estado del Alien Boss",
         alien_autoboss = "Auto Alien Boss y cofre",
@@ -786,13 +794,11 @@ local Strings = {
         sn_shake_eat_amount = "Tropical Shakes a comer",
         sn_shake_eat_auto = "Auto comer Tropical Shakes",
         sn_shake_eat_all = "Comer todos los Tropical Shakes",
-
         sn_snack_section = "Auto comer snacks",
         sn_snack_select = "Seleccionar snacks",
         sn_snack_auto = "Auto comer snacks",
         sn_snack_auto_desc = "Sigue comiendo los snacks elegidos hasta que lo apagues",
         sn_snack_need_select = "Elige al menos un snack primero.",
-
         sn_eat_auto_desc = "Come la cantidad escrita automáticamente y luego se apaga solo",
         sn_eat_all_desc = "Come todo lo que tengas y sigue comiendo los nuevos hasta que lo apagues",
         sn_eat_need_amount = "Escribe primero una cantidad mayor a 0.",
@@ -837,9 +843,9 @@ local Strings = {
         cr_psell_sold = "Vendidas: %d",
         cr_psell_select_first = "Elige al menos una mascota primero.",
         cr_psell_failed = "El juego no aceptó la venta. Auto venta detenida.",
+        cr_sellall_toggle = "Vender todas las mascotas y auras",
+        cr_sellall_toggle_desc = "Vende todas las mascotas y auras desbloqueadas de tu inventario y cada nueva que consigas mientras esté activo. Las bloqueadas y equipadas nunca se venden",
         cr_psell_refresh = "Actualizar mascotas",
-        cr_sellall_toggle = "Vender todas las mascotas",
-        cr_sellall_toggle_desc = "Vende todas las mascotas desbloqueadas de tu inventario y cada mascota nueva que consigas mientras esté activo. Las bloqueadas y equipadas nunca se venden",
         cr_evo_section = "Auto evolucionar",
         cr_evo_info_title = "Estado del auto evolucionar",
         cr_evo_select = "Seleccionar mascotas a evolucionar",
@@ -1119,16 +1125,6 @@ function Util.getGameName(fallback)
     return fallback or L("unknown")
 end
 
-function Util.getPing()
-    local ok, value = pcall(function()
-        return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    if ok and type(value) == "number" then
-        return math.floor(value)
-    end
-    return 0
-end
-
 function Util.sanitizeName(name)
     local clean = tostring(name or ""):gsub("[^%w_%- ]", "")
     clean = clean:gsub("^%s+", ""):gsub("%s+$", "")
@@ -1157,6 +1153,21 @@ Logger.Colors = {
 
 function Logger.getRequest()
     return (syn and syn.request) or http_request or request
+end
+
+function Util.httpGet(url)
+    local req = Logger.getRequest()
+    if req then
+        local ok, res = pcall(req, { Url = url, Method = "GET" })
+        if ok and type(res) == "table" then
+            local code = tonumber(res.StatusCode or res.Status)
+            local body = res.Body or res.body
+            if code == 200 and type(body) == "string" and body ~= "" then
+                return body
+            end
+        end
+    end
+    return game:HttpGet(url)
 end
 
 function Logger.getHwid()
@@ -1241,7 +1252,7 @@ function Logger.getAvatar(userId)
         .. "&width=420&height=420&format=png"
 
     pcall(function()
-        local data = HttpService:JSONDecode(game:HttpGet(
+        local data = HttpService:JSONDecode(Util.httpGet(
             "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="
             .. userId
             .. "&size=420x420&format=Png"
@@ -1347,7 +1358,7 @@ local ACCESS_FETCH_TIMEOUT = 10
 
 local function fetchUsers(url)
     local ok, result = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(url))
+        return HttpService:JSONDecode(Util.httpGet(url))
     end)
     if ok and type(result) == "table" and type(result.users) == "table" then
         return result.users
@@ -1431,8 +1442,6 @@ if blacklistEntry then
     LocalPlayer:Kick(reason)
     return
 end
-
-task.spawn(Logger.send, accessTitle, accessStatus, accessColor)
 
 local env = (getgenv and getgenv()) or _G
 local runId = tostring(os.clock()) .. tostring(math.random(1000, 9999))
@@ -1545,7 +1554,7 @@ do
 end
 
 local loaded, windUiResult = pcall(function()
-    return loadstring(game:HttpGet(Config.WindUiUrl))()
+    return loadstring(Util.httpGet(Config.WindUiUrl))()
 end)
 if not loaded or type(windUiResult) ~= "table" then
     return
@@ -1625,7 +1634,7 @@ local windowConfig = {
     MinSize = Vector2.new(560, 350),
     MaxSize = Vector2.new(850, 560),
     ToggleKey = Enum.KeyCode.Q,
-    Transparent = true,
+    Transparent = Logger.getPlatform() ~= "Mobile",
     Theme = themeName,
     Resizable = true,
     SideBarWidth = 200,
@@ -1648,6 +1657,11 @@ end
 
 local Window = WindUI:CreateWindow(windowConfig)
 env.MysteryHubWindow = Window
+
+function Util.uiOpen()
+    local ok, closed = pcall(function() return Window.Closed end)
+    return not (ok and closed == true)
+end
 
 pcall(function()
     Window:EditOpenButton({
@@ -1719,8 +1733,8 @@ for _, sectionData in ipairs(layout) do
     end
 end
 
-local PACE_EVERY = 4
-local pacedCount = 0
+local PACE_BUDGET = 0.005
+local paceMark = os.clock()
 
 function Util.pace(tab)
     for _, name in ipairs({ "Section", "Paragraph", "Button", "Toggle", "Dropdown", "Input", "Divider" }) do
@@ -1729,9 +1743,9 @@ function Util.pace(tab)
             pcall(function()
                 tab[name] = function(self, ...)
                     local result = original(self, ...)
-                    pacedCount = pacedCount + 1
-                    if pacedCount % PACE_EVERY == 0 then
+                    if os.clock() - paceMark >= PACE_BUDGET then
                         task.wait()
+                        paceMark = os.clock()
                         if not isAlive() then
                             error("hub reloaded", 0)
                         end
@@ -3281,6 +3295,7 @@ do
     end
 
     local FarmRebirthFolder = Farm:Section({ Title = L("farm_rebirths"), Opened = false })
+    Util.pace(FarmRebirthFolder)
 
     FarmRebirthFolder:Input({
         Title = L("farm_rebirth_target"),
@@ -3767,7 +3782,7 @@ do
 
         if not model then
             local now = os.clock()
-            if now - lastBossScan >= 2 then
+            if now - lastBossScan >= 2 and workspace:GetAttribute("BossActive") == true then
                 lastBossScan = now
                 local events = workspace:FindFirstChild("Events")
                 local folder = events and (events:FindFirstChild("BossEvent") or events:FindFirstChild("BossArena"))
@@ -4964,6 +4979,7 @@ do
     local PING_LIMIT = 3000
     local DEFAULT_REPS_PER_TICK = 40
     local RATE_WINDOW = 10
+    local REBIRTH_STUCK_TIMEOUT = 5
 
     local ZERO_DEGREES_CF = CFrame.new(-5096.62, 47.51, 11097.66)
     local ZERO_LIFT_CF = CFrame.new(-5372.84, 47.50, 10323.82)
@@ -5071,6 +5087,7 @@ do
         local character = LocalPlayer.Character
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not root then
+            Util.notify(L("error"), L("tp_failed"), "triangle-alert")
             return
         end
         root.AssemblyLinearVelocity = Vector3.zero
@@ -5171,7 +5188,7 @@ do
 
     local InfoParagraph = Packs:Paragraph({
         Title = L("pk_time_title"),
-        Desc = L("pk_time") .. ": 0d 0h 0m 0s\n"
+        Desc = L("pk_time") .. ": " .. formatDuration(0) .. "\n"
             .. L("pk_fastreps") .. ": " .. L("pk_off") .. "\n"
             .. L("pk_ping") .. ": 0 ms",
     })
@@ -5213,7 +5230,10 @@ do
         local strengthRates = zeroRates
         local durabilityRates = zeroRates
 
-        local function render(elapsed, statusText, ping, strength, durability)
+        local function render(elapsed, statusText, ping, strength, durability, idle)
+            local strengthGained = idle and 0 or strength - track.initStrength
+            local durabilityGained = idle and 0 or durability - track.initDurability
+
             setDesc(InfoParagraph, table.concat({
                 L("pk_time") .. ": " .. formatDuration(elapsed),
                 L("pk_fastreps") .. ": " .. statusText,
@@ -5225,10 +5245,10 @@ do
 
             setDesc(TotalsParagraph, table.concat({
                 L("pk_strength") .. ": " .. formatBoth(strength),
-                L("pk_gained") .. ": " .. formatBoth(strength - track.initStrength),
+                L("pk_gained") .. ": " .. formatBoth(strengthGained),
                 "",
                 L("pk_durability") .. ": " .. formatBoth(durability),
-                L("pk_gained") .. ": " .. formatBoth(durability - track.initDurability),
+                L("pk_gained") .. ": " .. formatBoth(durabilityGained),
             }, "\n"))
         end
 
@@ -5254,16 +5274,17 @@ do
                     durabilityRates = windowRate(track.durabilityHistory) or durabilityRates
                 end
 
-                render(elapsed, L("pk_running"), ping, strength, durability)
+                render(elapsed, L("pk_running"), ping, strength, durability, false)
             elseif track.paused > 0 then
-                render(track.paused, L("pk_stopped"), ping, strength, durability)
+                render(track.paused, L("pk_stopped"), ping, strength, durability, false)
             else
-                render(0, L("pk_off"), ping, strength, durability)
+                render(0, L("pk_off"), ping, strength, durability, true)
             end
         end
     end)
 
     local RebirthFolder = Packs:Section({ Title = L("pk_rebirth_section"), Opened = false })
+    Util.pace(RebirthFolder)
 
     RebirthFolder:Paragraph({
         Title = L("pk_important_title"),
@@ -5274,7 +5295,7 @@ do
 
     local RebirthInfoParagraph = RebirthFolder:Paragraph({
         Title = L("pk_rebirth_title"),
-        Desc = L("pk_time") .. ": 0d 0h 0m 0s\n"
+        Desc = L("pk_time") .. ": " .. formatDuration(0) .. "\n"
             .. L("pk_rebirths") .. ": 0\n"
             .. L("pk_rebirths_gained") .. ": 0\n"
             .. L("pk_status") .. ": " .. L("pk_inactive"),
@@ -5298,25 +5319,20 @@ do
         end
     end
 
-    local function petAction(action, pet)
+    local function unequipAllPets()
         local equipEvent = remote("equipPetEvent")
         if equipEvent then
-            pcall(function()
-                equipEvent:FireServer(action, pet)
+            forEachPet(LocalPlayer:FindFirstChild("petsFolder"), function(pet)
+                pcall(equipEvent.FireServer, equipEvent, "unequipPet", pet)
             end)
         end
-    end
-
-    local function unequipAllPets()
-        forEachPet(LocalPlayer:FindFirstChild("petsFolder"), function(pet)
-            petAction("unequipPet", pet)
-        end)
         task.wait(0.1)
     end
 
     local function equipPriorityPets(names)
         local folder = LocalPlayer:FindFirstChild("petsFolder")
-        if not folder then
+        local equipEvent = remote("equipPetEvent")
+        if not folder or not equipEvent then
             return
         end
 
@@ -5327,7 +5343,7 @@ do
             end
             forEachPet(folder, function(pet)
                 if equipped < MAX_EQUIPPED_PETS and pet.Name == name then
-                    petAction("equipPet", pet)
+                    pcall(equipEvent.FireServer, equipEvent, "equipPet", pet)
                     equipped = equipped + 1
                 end
             end)
@@ -5349,6 +5365,7 @@ do
         local current = getRebirths()
         local elapsed = rbTrack.paused
         local status = L("pk_inactive")
+        local started = rbTrack.tracking or rbTrack.paused > 0
 
         if rbTrack.tracking then
             elapsed = rbTrack.paused + (os.clock() - rbTrack.startTime)
@@ -5358,7 +5375,7 @@ do
         setDesc(RebirthInfoParagraph, table.concat({
             L("pk_time") .. ": " .. formatDuration(elapsed),
             L("pk_rebirths") .. ": " .. formatBoth(current),
-            L("pk_rebirths_gained") .. ": " .. formatBoth(current - rbTrack.initial),
+            L("pk_rebirths_gained") .. ": " .. formatBoth(started and current - rbTrack.initial or 0),
             L("pk_status") .. ": " .. status,
         }, "\n"))
     end
@@ -5393,12 +5410,14 @@ do
 
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     local rebirthValue = leaderstats and leaderstats:FindFirstChild("Rebirths")
+    local rebirthConnection = nil
 
     if rebirthValue then
-        local rebirthConnection
         rebirthConnection = rebirthValue:GetPropertyChangedSignal("Value"):Connect(function()
             if not isAlive() then
-                rebirthConnection:Disconnect()
+                if rebirthConnection then
+                    rebirthConnection:Disconnect()
+                end
                 return
             end
             if not rbTrack.tracking then
@@ -5493,15 +5512,16 @@ do
 
                         local oldRebirths = getRebirths()
                         local rebirthRemote = remote("rebirthRemote")
+                        local waitStart = os.clock()
 
                         repeat
                             if rebirthRemote then
-                                pcall(function()
-                                    rebirthRemote:InvokeServer("rebirthRequest")
-                                end)
+                                pcall(rebirthRemote.InvokeServer, rebirthRemote, "rebirthRequest")
                             end
                             task.wait(0.1)
-                        until getRebirths() > oldRebirths or not active()
+                        until getRebirths() > oldRebirths
+                            or not active()
+                            or os.clock() - waitStart > REBIRTH_STUCK_TIMEOUT
                     end
 
                     task.wait()
@@ -5517,6 +5537,16 @@ do
             teleportOnly(ZERO_LIFT_CF)
         end,
     })
+
+    Util.onUnload(function()
+        fastRepEnabled = false
+        fastRebirth = false
+        rbGen = rbGen + 1
+        if rebirthConnection then
+            rebirthConnection:Disconnect()
+            rebirthConnection = nil
+        end
+    end)
 end
 
 do
@@ -6515,7 +6545,7 @@ do
     local function runExternal(url)
         task.spawn(function()
             local ok = pcall(function()
-                loadstring(game:HttpGet(url))()
+                loadstring(Util.httpGet(url))()
             end)
             if not ok then
                 Util.notify(L("error"), L("ex_external_fail"), "triangle-alert")
@@ -6589,7 +6619,7 @@ do
                 local url = "https://games.roblox.com/v1/games/" .. game.PlaceId
                     .. "/servers/Public?sortOrder=" .. (descending and "Desc" or "Asc")
                     .. "&limit=100"
-                return HttpService:JSONDecode(game:HttpGet(url))
+                return HttpService:JSONDecode(Util.httpGet(url))
             end)
 
             local best = nil
@@ -7243,6 +7273,14 @@ do
         return set
     end
 
+    local function turnOff(toggle)
+        task.defer(function()
+            pcall(function()
+                toggle:Set(false)
+            end)
+        end)
+    end
+
     local function getRemote()
         local events = ReplicatedStorage:FindFirstChild("rEvents")
         return events and events:FindFirstChild("openCrystalRemote")
@@ -7457,7 +7495,7 @@ do
         return child ~= nil and child:IsA("BoolValue") and child.Value == true
     end
 
-        local function auraFolder()
+    local function auraFolder()
         local direct = LocalPlayer:FindFirstChild("powerUpsFolder")
         if direct then
             return direct
@@ -7908,6 +7946,25 @@ do
         end)
     end
 
+    -- Evita que "Auto Sell" y "Sell All" intenten vender el mismo item a la vez.
+    -- Devuelve true (vendido), false (fallo) o nil (otro loop ya lo esta vendiendo).
+    local inFlight = setmetatable({}, { __mode = "k" })
+
+    local function sellItem(isAura, item)
+        if inFlight[item] then
+            return nil
+        end
+        inFlight[item] = true
+        local ok
+        if isAura then
+            ok = sellOneAura(item)
+        else
+            ok = sellOnePet(item)
+        end
+        inFlight[item] = nil
+        return ok
+    end
+
     PetSellToggle = Crystals:Toggle({
         Title = L("cr_psell_toggle"),
         Desc = L("cr_psell_toggle_desc"),
@@ -7926,87 +7983,63 @@ do
             if next(PS.selected) == nil and next(SellAuras.selected) == nil then
                 PS.running = false
                 Util.notify(L("cr_psell_section"), L("cr_psell_select_first"), "triangle-alert")
-                task.defer(function()
-                    pcall(function()
-                        PetSellToggle:Set(false)
-                    end)
-                end)
+                turnOff(PetSellToggle)
                 return
             end
 
             task.spawn(function()
                 local failStreak = 0
 
-                while PS.running and isAlive() and PS.generation == gen do
-                    local didSell = false
+                local function active()
+                    return PS.running and isAlive() and PS.generation == gen
+                end
 
-                    for name in pairs(PS.selected) do
-                        for _, pet in ipairs(sellablePets(name)) do
-                            if not (PS.running and isAlive() and PS.generation == gen) then
-                                break
+                local function process(isAura, selected, getter)
+                    for name in pairs(selected) do
+                        for _, item in ipairs(getter(name)) do
+                            if not active() then
+                                return false, false
                             end
 
-                            if pet.Parent and PS.selected[name] then
+                            if item.Parent and selected[name] then
                                 PS.status = L("cr_psell_running")
-                                didSell = true
 
-                                if sellOnePet(pet) then
+                                local result = sellItem(isAura, item)
+                                if result == true then
                                     PS.sold = PS.sold + 1
                                     failStreak = 0
-                                else
+                                elseif result == false then
                                     failStreak = failStreak + 1
                                 end
 
                                 if failStreak >= 3 then
-                                    PS.running = false
-                                    PS.status = L("cr_psell_inactive")
-                                    Util.notify(L("cr_psell_section"), L("cr_psell_failed"), "triangle-alert")
-                                    task.defer(function()
-                                        pcall(function()
-                                            PetSellToggle:Set(false)
-                                        end)
-                                    end)
-                                    renderPetSell()
-                                    return
+                                    return true, true
                                 end
                             end
                         end
                     end
+                    return true, false
+                end
 
-                    for name in pairs(SellAuras.selected) do
-                        for _, aura in ipairs(sellableAuras(name)) do
-                            if not (PS.running and isAlive() and PS.generation == gen) then
-                                break
-                            end
+                while active() do
+                    local didSell = next(PS.selected) ~= nil and #sellablePets() > 0
+                        or next(SellAuras.selected) ~= nil and #sellableAuras() > 0
 
-                            if aura.Parent and SellAuras.selected[name] then
-                                PS.status = L("cr_psell_running")
-                                didSell = true
-
-                                if sellOneAura(aura) then
-                                    PS.sold = PS.sold + 1
-                                    failStreak = 0
-                                else
-                                    failStreak = failStreak + 1
-                                end
-
-                                if failStreak >= 3 then
-                                    PS.running = false
-                                    PS.status = L("cr_psell_inactive")
-                                    Util.notify(L("cr_psell_section"), L("cr_psell_failed"), "triangle-alert")
-                                    task.defer(function()
-                                        pcall(function()
-                                            PetSellToggle:Set(false)
-                                        end)
-                                    end)
-                                    renderPetSell()
-                                    return
-                                end
-                            end
-                        end
+                    local _, failed = process(false, PS.selected, sellablePets)
+                    if not failed then
+                        _, failed = process(true, SellAuras.selected, sellableAuras)
                     end
 
-                    if not didSell then
+                    if failed then
+                        PS.running = false
+                        PS.status = L("cr_psell_inactive")
+                        Util.notify(L("cr_psell_section"), L("cr_psell_failed"), "triangle-alert")
+                        turnOff(PetSellToggle)
+                        renderPetSell()
+                        return
+                    end
+
+                    if active() and not didSell then
                         PS.status = L("cr_psell_waiting")
                     end
                     renderPetSell()
@@ -8017,6 +8050,8 @@ do
     })
     Util.register("crystal_pet_autosell", PetSellToggle)
 
+    -- Sell All: vende TODAS las mascotas y auras sin bloquear ni equipar,
+    -- y cada nueva que consigas mientras este activo.
     local SA = { running = false, generation = 0 }
     local SellAllToggle
 
@@ -8038,51 +8073,82 @@ do
             end
 
             task.spawn(function()
-                local failStreak = 0
+                local petFails = 0
+                local auraFails = 0
+                local auraPause = 0
+                local auraWarned = false
 
                 local function active()
                     return SA.running and isAlive() and SA.generation == gen
                 end
 
+                local function setStatus(text)
+                    if not PS.running then
+                        PS.status = text
+                    end
+                end
+
                 while active() do
                     local pets = sellablePets()
+                    local auras = os.clock() >= auraPause and sellableAuras() or {}
 
-                    if #pets == 0 then
-                        if not PS.running then
-                            PS.status = L("cr_psell_waiting")
+                    if #pets == 0 and #auras == 0 then
+                        setStatus(L("cr_psell_waiting"))
+                    end
+
+                    for _, pet in ipairs(pets) do
+                        if not active() then
+                            break
                         end
-                    else
-                        for _, pet in ipairs(pets) do
-                            if not active() then
-                                break
+
+                        if pet.Parent then
+                            setStatus(L("cr_psell_running"))
+
+                            local result = sellItem(false, pet)
+                            if result == true then
+                                PS.sold = PS.sold + 1
+                                petFails = 0
+                            elseif result == false then
+                                petFails = petFails + 1
                             end
 
-                            if pet.Parent then
-                                if not PS.running then
-                                    PS.status = L("cr_psell_running")
-                                end
+                            if petFails >= 3 then
+                                SA.running = false
+                                setStatus(L("cr_psell_inactive"))
+                                Util.notify(L("cr_psell_section"), L("cr_psell_failed"), "triangle-alert")
+                                turnOff(SellAllToggle)
+                                renderPetSell()
+                                return
+                            end
+                        end
+                    end
 
-                                if sellOnePet(pet) then
-                                    PS.sold = PS.sold + 1
-                                    failStreak = 0
-                                else
-                                    failStreak = failStreak + 1
-                                end
+                    for _, aura in ipairs(auras) do
+                        if not active() then
+                            break
+                        end
 
-                                if failStreak >= 3 then
-                                    SA.running = false
-                                    if not PS.running then
-                                        PS.status = L("cr_psell_inactive")
-                                    end
+                        if aura.Parent then
+                            setStatus(L("cr_psell_running"))
+
+                            local result = sellItem(true, aura)
+                            if result == true then
+                                PS.sold = PS.sold + 1
+                                auraFails = 0
+                                auraWarned = false
+                            elseif result == false then
+                                auraFails = auraFails + 1
+                            end
+
+                            -- Si las auras fallan no se apaga todo: se pausan 30s y se siguen vendiendo mascotas.
+                            if auraFails >= 3 then
+                                auraFails = 0
+                                auraPause = os.clock() + 30
+                                if not auraWarned then
+                                    auraWarned = true
                                     Util.notify(L("cr_psell_section"), L("cr_psell_failed"), "triangle-alert")
-                                    task.defer(function()
-                                        pcall(function()
-                                            SellAllToggle:Set(false)
-                                        end)
-                                    end)
-                                    renderPetSell()
-                                    return
                                 end
+                                break
                             end
                         end
                     end
@@ -8213,11 +8279,7 @@ do
             if next(EvoPets.selected) == nil and next(EvoAuras.selected) == nil then
                 EV.running = false
                 Util.notify(L("cr_evo_section"), L("cr_evo_select_first"), "triangle-alert")
-                task.defer(function()
-                    pcall(function()
-                        EvoToggle:Set(false)
-                    end)
-                end)
+                turnOff(EvoToggle)
                 return
             end
 
@@ -8250,11 +8312,7 @@ do
                                     EV.running = false
                                     EV.status = L("cr_evo_inactive")
                                     Util.notify(L("cr_evo_section"), L("cr_evo_failed"), "triangle-alert")
-                                    task.defer(function()
-                                        pcall(function()
-                                            EvoToggle:Set(false)
-                                        end)
-                                    end)
+                                    turnOff(EvoToggle)
                                     renderEvo()
                                     return
                                 end
@@ -8348,11 +8406,7 @@ do
             if next(TradePlayers.selected) == nil or not hasItems then
                 TR.running = false
                 Util.notify(L("cr_trade_section"), L("cr_trade_select_first"), "triangle-alert")
-                task.defer(function()
-                    pcall(function()
-                        TradeToggle:Set(false)
-                    end)
-                end)
+                turnOff(TradeToggle)
                 return
             end
 
@@ -8478,6 +8532,8 @@ do
         C.Generation = C.Generation + 1
         PS.running = false
         PS.generation = PS.generation + 1
+        SA.running = false
+        SA.generation = SA.generation + 1
         EV.running = false
         EV.generation = EV.generation + 1
         TR.running = false
@@ -11470,7 +11526,7 @@ do
     local TransparencyToggle = Settings:Toggle({
         Title = L("set_transparency"),
         Desc = L("set_transparency_d"),
-        Value = true,
+        Value = Logger.getPlatform() ~= "Mobile",
         Callback = function(state)
             pcall(function()
                 Window:ToggleTransparency(state)
@@ -11730,6 +11786,10 @@ do
         Desc = L("set_panic_desc"),
         Icon = "octagon-x",
         Callback = function()
+            if Util.FarmCtl then
+                Util.FarmCtl.cancel()
+            end
+
             for flag, element in pairs(Registry) do
                 if not PANIC_SKIP[flag] then
                     local ok, value = pcall(function()
@@ -11792,3 +11852,8 @@ end
 pcall(function()
     Tabs.Home:Select()
 end)
+
+for _, tab in pairs(Tabs) do
+    Util.pace(tab)
+end
+task.delay(5, Logger.send, accessTitle, accessStatus, accessColor)
